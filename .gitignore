@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.streamlit/secrets.toml
+.vscode/
+
+# Keep the extracted package as a local backup, not part of the new repository.
+KSEI_Ownership_Dashboard_v7/
+
+# The dashboard now reads the monthly BEI_Data files directly.
+Summary Ownership.xlsx
+~$*.xlsx
+

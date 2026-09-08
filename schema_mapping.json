@@ -1,0 +1,41 @@
+{
+  "sheet_candidates": ["data", "ownership", "holdings", "shareholders"],
+  "columns": {
+    "date": ["DATE", "REPORT_DATE", "REPORTING_DATE", "PERIOD", "AS_OF_DATE"],
+    "ticker": ["SHARE_CODE", "TICKER", "SECURITY_CODE", "STOCK_CODE", "CODE"],
+    "security_name": ["ISSUER_NAME", "SECURITY_NAME", "COMPANY_NAME", "ISSUER"],
+    "investor_name": ["INVESTOR_NAME", "HOLDER_NAME", "SHAREHOLDER_NAME", "OWNER_NAME"],
+    "investor_category": ["INVESTOR_TYPE", "INVESTOR_CLASSIFICATION", "INVESTOR_CATEGORY", "HOLDER_TYPE", "OWNER_TYPE"],
+    "domestic_foreign": ["LOCAL_FOREIGN", "DOMESTIC_FOREIGN", "RESIDENCY", "INVESTOR_STATUS"],
+    "nationality": ["NATIONALITY", "CITIZENSHIP"],
+    "domicile": ["DOMICILE", "COUNTRY", "COUNTRY_OF_DOMICILE"],
+    "ownership_scripless": ["HOLDINGS_SCRIPLESS", "SCRIPLESS_HOLDINGS"],
+    "ownership_scrip": ["HOLDINGS_SCRIP", "SCRIP_HOLDINGS"],
+    "ownership_units": ["TOTAL_HOLDING_SHARES", "TOTAL_HOLDINGS", "HOLDINGS", "OWNERSHIP_UNITS", "SHARES"],
+    "ownership_pct": ["PERCENTAGE", "OWNERSHIP_PCT", "OWNERSHIP_PERCENTAGE", "PCT", "SHARE_PCT"],
+    "investor_count": ["INVESTOR_COUNT", "NUMBER_OF_INVESTORS", "INVESTORS"],
+    "sector": ["SECTOR", "INDUSTRY", "BUSINESS_SECTOR"]
+  },
+  "investor_type_map": {
+    "ID": "Individual",
+    "CP": "Corporate",
+    "MF": "Mutual Funds",
+    "IB": "Financial Institution",
+    "IS": "Insurance",
+    "SC": "Securities Company",
+    "PF": "Pension Funds",
+    "FD": "Foundation",
+    "OT": "Other",
+    "Financial Institutional": "Financial Institution"
+  },
+  "residency_map": {
+    "L": "Domestic",
+    "D": "Domestic",
+    "LOCAL": "Domestic",
+    "DOMESTIC": "Domestic",
+    "A": "Foreign",
+    "F": "Foreign",
+    "ASING": "Foreign",
+    "FOREIGN": "Foreign"
+  }
+}
