@@ -2,6 +2,8 @@
 
 Interactive Streamlit dashboard for monthly Indonesian stock ownership data published by BEI/KSEI.
 
+Live dashboard: https://ksei-ownership-dashboard.streamlit.app/
+
 ## Open the dashboard on this computer
 
 Double-click **Open Dashboard.bat**. The first launch installs the required packages once. Later launches open the dashboard directly.
@@ -36,4 +38,3 @@ The local address is normally http://localhost:8501.
 The app reads BEI_Data directly. It no longer depends on a separately prepared Summary Ownership.xlsx.
 
 Expected core fields are configured in schema_mapping.json: reporting date, stock code, issuer name, holder name, investor classification, local/foreign status, total shares, and ownership percentage.
-
