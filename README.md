@@ -2,7 +2,7 @@
 
 A focused Streamlit dashboard for monthly Indonesian stock-ownership data published by BEI/KSEI.
 
-The interface uses a responsive white institutional asset-management layout, modern metric cards from `streamlit-shadcn-ui`, and interactive Plotly charts. The presentation layer is separate from the existing BEI data-loading and ownership-calculation logic.
+The interface uses a responsive, information-dense capital-markets terminal layout with native Streamlit controls and interactive Plotly charts. The presentation layer is separate from the existing BEI data-loading and ownership-calculation logic.
 
 Live dashboard: https://ksei-ownership-dashboard.streamlit.app/
 

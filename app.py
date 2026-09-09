@@ -8,7 +8,6 @@ from urllib.parse import quote
 
 import pandas as pd
 import streamlit as st
-import streamlit_shadcn_ui as ui
 
 from charts import (
     movement_breakdown_chart,
@@ -187,6 +186,7 @@ def render_pivot(
     holder_links: bool = False,
     compact: bool = False,
     heatmap: bool = False,
+    append_delta: bool = False,
 ) -> None:
     if pivot.empty:
         st.info("No pivot data is available for this selection.")
@@ -231,15 +231,17 @@ def render_pivot(
             return ""
         numeric = float(value)
         if abs(numeric) <= 1e-9:
-            return "background-color:#fef9c3;color:#111827;"
+            return "background-color:rgba(245,166,35,.075);color:#8998A8;"
         ratio = min(abs(numeric) / heatmap_scale, 1.0) if heatmap_scale else 0.0
-        opacity = 0.14 + 0.38 * ratio**0.5
-        rgb = "34,197,94" if numeric > 0 else "239,68,68"
-        return f"background-color:rgba({rgb},{opacity:.3f});color:#111827;"
+        opacity = 0.07 + 0.16 * ratio**0.5
+        rgb = "0,199,129" if numeric > 0 else "255,90,82"
+        color = "#00C781" if numeric > 0 else "#FF5A52"
+        return f"background-color:rgba({rgb},{opacity:.3f});color:{color};"
 
-    header_cells = "".join(
-        f"<th>{escape(str(column))}</th>" for column in [row_label, *value_columns]
-    )
+    header_columns = [row_label, *value_columns]
+    if append_delta:
+        header_columns.extend(["Δ Shares", "Δ %"])
+    header_cells = "".join(f"<th>{escape(str(column))}</th>" for column in header_columns)
     body_rows: list[str] = []
     for _, row in view.iterrows():
         raw_label = str(row[row_label])
@@ -261,6 +263,29 @@ def render_pivot(
                 f"{escape(display_value(current))}</td>"
             )
             previous = current
+        if append_delta:
+            current = row[value_columns[-1]] if value_columns else pd.NA
+            prior = row[value_columns[-2]] if len(value_columns) > 1 else pd.NA
+            if pd.isna(current) or pd.isna(prior):
+                delta_shares: object = pd.NA
+                delta_pct: object = pd.NA
+                delta_class = "change-missing"
+            else:
+                delta_shares = float(current) - float(prior)
+                delta_pct = (
+                    delta_shares / abs(float(prior)) * 100
+                    if abs(float(prior)) > 1e-9
+                    else pd.NA
+                )
+                delta_class = movement_class(delta_shares, 0.0)
+            cells.append(
+                f'<td class="pivot-value pivot-delta {delta_class}">'
+                f"{escape(display_value(delta_shares) if pd.isna(delta_shares) else ('0' if abs(float(delta_shares)) < .5 else f'{float(delta_shares):+,.0f}'))}</td>"
+            )
+            cells.append(
+                f'<td class="pivot-value pivot-delta {delta_class}">'
+                f"{'' if pd.isna(delta_pct) else ('0.00%' if abs(float(delta_pct)) <= 1e-9 else f'{float(delta_pct):+.2f}%')}</td>"
+            )
         body_rows.append("<tr>" + "".join(cells) + "</tr>")
 
     container_class = "pivot-scroll compact-pivot" if compact else "pivot-scroll"
@@ -313,7 +338,7 @@ def selection_metrics(
         "counterparties": int(latest[counterparty_column].nunique()),
         "largest_stake": float(largest_stake) if pd.notna(largest_stake) else None,
         "months": len(dates),
-        "latest_period": dates[-1].strftime("%b %Y"),
+        "latest_period": dates[-1].strftime("%b-%y").upper(),
     }
 
 
@@ -328,51 +353,44 @@ def metric_delta_label(delta: object, delta_pct: object) -> str | None:
     return f"{sign}{compact_delta} ({float(delta_pct):+.2f}%)"
 
 
-def render_metric_strip(metrics: dict[str, object], analyze_by: str, key_prefix: str) -> None:
-    counterparty_label = "Tracked holders" if analyze_by == "Stock" else "Tracked stocks"
-    largest_description = "Largest reported holder stake" if analyze_by == "Stock" else "Largest stock position"
-    cards = st.columns([1.35, 1, 1, 1, 1], gap="small")
-    with cards[0]:
-        ui.metric_card(
-            label="Reported shares",
-            value=compact_number(metrics["reported_shares"]),
-            description="Latest 1% ownership records",
-            delta=metric_delta_label(metrics["delta"], metrics["delta_pct"]),
-            key=f"{key_prefix}_reported_shares",
-        )
-    with cards[1]:
-        ui.metric_card(
-            label=counterparty_label,
-            value=f"{int(metrics['counterparties']):,}",
-            description="In the latest filing month",
-            delta="Current filing",
-            key=f"{key_prefix}_counterparties",
-        )
-    with cards[2]:
-        largest_value = metrics["largest_stake"]
-        ui.metric_card(
-            label="Largest stake",
-            value="—" if largest_value is None else f"{float(largest_value):.2f}%",
-            description=largest_description,
-            delta="Observed filing",
-            key=f"{key_prefix}_largest_stake",
-        )
-    with cards[3]:
-        ui.metric_card(
-            label="History depth",
-            value=f"{int(metrics['months'])} months",
-            description="Automatically discovered files",
-            delta="Monthly coverage",
-            key=f"{key_prefix}_history_depth",
-        )
-    with cards[4]:
-        ui.metric_card(
-            label="Latest period",
-            value=str(metrics["latest_period"]),
-            description="Most recent BEI observation",
-            delta="Auto-detected",
-            key=f"{key_prefix}_latest_period",
-        )
+def terminal_number(value: object, decimals: int = 2) -> str:
+    return (
+        compact_number(value, decimals=decimals)
+        .replace(" tn", "T")
+        .replace(" bn", "B")
+        .replace(" mn", "M")
+        .replace(" k", "K")
+    )
+
+
+def render_terminal_header(
+    ticker: str,
+    company_name: str,
+    analyze_by: str,
+    metrics: dict[str, object],
+) -> None:
+    counterparty_label = "HOLDERS" if analyze_by == "Stock" else "STOCKS"
+    largest_value = metrics["largest_stake"]
+    delta = metrics["delta"]
+    delta_class = "terminal-positive" if delta is not None and float(delta) > 0 else "terminal-negative" if delta is not None and float(delta) < 0 else "terminal-flat"
+    delta_label = metric_delta_label(delta, metrics["delta_pct"]) or "—"
+    st.markdown(
+        '<div class="terminal-header">'
+        '<div class="terminal-identity">'
+        f'<span class="terminal-ticker">{escape(str(ticker))}</span>'
+        f'<span class="terminal-company">{escape(str(company_name).upper())}</span>'
+        f'<span class="terminal-mode">{escape(analyze_by.upper())}</span>'
+        '</div>'
+        '<div class="terminal-stats">'
+        f'<span><b>SHARES</b><strong>{escape(terminal_number(metrics["reported_shares"]))}</strong></span>'
+        f'<span><b>{counterparty_label}</b><strong>{int(metrics["counterparties"]):,}</strong></span>'
+        f'<span><b>MAX</b><strong>{"—" if largest_value is None else f"{float(largest_value):.2f}%"}</strong></span>'
+        f'<span><b>PERIOD</b><strong>{escape(str(metrics["latest_period"]))}</strong></span>'
+        f'<span><b>HISTORY</b><strong>{int(metrics["months"])}M</strong></span>'
+        f'<span><b>Δ SHARES</b><strong class="{delta_class}">{escape(delta_label)}</strong></span>'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def render_latest_snapshot(
@@ -380,35 +398,62 @@ def render_latest_snapshot(
     row_label: str,
     analyze_by: str,
 ) -> None:
-    latest_date = pd.Timestamp(history["date"].max())
-    latest = history[history["date"].eq(latest_date)].nlargest(5, "ownership_units")
+    dates = sorted(pd.Timestamp(value) for value in history["date"].dropna().unique())
+    latest_date = dates[-1]
+    latest_all = history[history["date"].eq(latest_date)]
+    latest = latest_all.nlargest(5, "ownership_units")
     total = float(latest["ownership_units"].sum())
     snapshot_label = row_label.lower() if row_label.lower().endswith("s") else f"{row_label.lower()}s"
-    rows: list[str] = []
-    for position, (_, row) in enumerate(latest.iterrows(), start=1):
-        label = str(row["series_label"])
+
+    def linked_label(label: str) -> str:
         label_html = escape(label)
         if analyze_by == "Stock":
             holder_query = escape(quote(label, safe=""), quote=True)
-            label_html = f'<a href="/?holder={holder_query}" target="_top">{label_html}</a>'
+            return f'<a href="/?holder={holder_query}" target="_top">{label_html}</a>'
+        return label_html
+
+    rows: list[str] = []
+    for position, (_, row) in enumerate(latest.iterrows(), start=1):
+        label = str(row["series_label"])
         ownership_pct = row.get("ownership_pct")
         percentage = "" if pd.isna(ownership_pct) else f"{float(ownership_pct):.2f}%"
         rows.append(
             '<div class="snapshot-row">'
             f'<span class="snapshot-rank">{position}</span>'
-            f'<span class="snapshot-name" title="{escape(label, quote=True)}">{label_html}</span>'
+            f'<span class="snapshot-name" title="{escape(label, quote=True)}">{linked_label(label)}</span>'
             '<span class="snapshot-value">'
-            f'<strong>{float(row["ownership_units"]):,.0f}</strong>'
+            f'<strong>{terminal_number(row["ownership_units"])}</strong>'
             f'<small>{percentage}</small></span></div>'
         )
+
+    mover_rows: list[str] = []
+    if len(dates) > 1:
+        previous_date = dates[-2]
+        current_values = latest_all.groupby("series_label", observed=True)["ownership_units"].sum(min_count=1)
+        previous_values = history[history["date"].eq(previous_date)].groupby("series_label", observed=True)["ownership_units"].sum(min_count=1)
+        movement = pd.concat([current_values.rename("current"), previous_values.rename("previous")], axis=1).dropna()
+        movement["delta"] = movement["current"] - movement["previous"]
+        movement = movement[movement["delta"].abs().gt(.5)].assign(abs_delta=lambda frame: frame["delta"].abs()).nlargest(3, "abs_delta")
+        for label, mover in movement.iterrows():
+            delta_value = float(mover["delta"])
+            direction = "↑" if delta_value > 0 else "↓"
+            direction_class = "mover-up" if delta_value > 0 else "mover-down"
+            mover_rows.append(
+                f'<div class="mover-row {direction_class}"><span class="mover-arrow">{direction}</span>'
+                f'<span class="mover-name" title="{escape(str(label), quote=True)}">{linked_label(str(label))}</span>'
+                f'<strong>{"+" if delta_value > 0 else "−"}{terminal_number(abs(delta_value))}</strong></div>'
+            )
+    if not mover_rows:
+        mover_rows.append('<div class="no-movers">NO REPORTED CHANGE</div>')
+
     st.markdown(
         '<div class="snapshot-card">'
         '<div class="snapshot-card-header">'
-        f'<div><span class="panel-eyebrow">Latest snapshot</span><h3>Top {escape(snapshot_label)}</h3></div>'
-        f'<span class="period-chip">{latest_date:%b %Y}</span></div>'
+        f'<div><span class="period-chip">{latest_date:%b-%y}</span><h3>TOP {escape(snapshot_label.upper())}</h3></div>'
+        f'<span class="snapshot-total">TOP 5&nbsp;&nbsp;{terminal_number(total)}</span></div>'
         f'<div class="snapshot-list">{"".join(rows)}</div>'
-        '<div class="snapshot-footer"><span>Top five reported shares</span>'
-        f'<strong>{total:,.0f}</strong></div></div>',
+        '<div class="movers-header">MONTHLY MOVERS</div>'
+        f'<div class="movers-list">{"".join(mover_rows)}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -468,14 +513,10 @@ with st.sidebar:
     st.markdown(
         '<div class="sidebar-brand">'
         '<div class="ksei-wordmark">KSEI</div>'
-        '<div class="ksei-market">Indonesia Capital Market</div>'
+        '<div class="ksei-market">OWNERSHIP MONITOR</div>'
         '<div class="sidebar-brand-rule"></div>'
-        '<div class="sidebar-title">Ownership Intelligence</div>'
-        '<div class="sidebar-subtitle">Institutional ownership analytics</div>'
         '</div>'
-        '<div class="sidebar-nav-item active"><span class="nav-icon">◇</span>'
-        '<span>Ownership dashboard</span></div>'
-        '<div class="sidebar-section-label">Analysis</div>',
+        '<div class="sidebar-section-label">ANALYSIS</div>',
         unsafe_allow_html=True,
     )
     analyze_by = st.selectbox(
@@ -510,14 +551,14 @@ with st.sidebar:
     active_metrics = selection_metrics(ownership_data, analyze_by, selected_entity)
     st.markdown(
         '<div class="sidebar-rule"></div>'
-        '<div class="sidebar-section-label">Data coverage</div>'
+        '<div class="sidebar-section-label">DATA COVERAGE</div>'
         '<div class="sidebar-source-grid">'
         f'<span>Ownership files</span><strong>{ownership_metadata.get("source_files", 0)}</strong>'
         f'<span>Classification files</span><strong>{classification_metadata.get("source_files", 0)}</strong>'
         f'<span>Type files</span><strong>{type_metadata.get("source_files", 0)}</strong>'
-        f'<span>Latest period</span><strong>{escape(str(active_metrics["latest_period"]))}</strong>'
+        f'<span>Latest</span><strong>{escape(str(active_metrics["latest_period"]))}</strong>'
         '</div>'
-        '<div class="sidebar-status"><span></span>BEI source folders connected</div>',
+        '<div class="sidebar-status"><span></span>DATA CONNECTED</div>',
         unsafe_allow_html=True,
     )
 
@@ -547,24 +588,7 @@ else:
 
 identity_code = selected_entity if analyze_by == "Stock" else "OWNER"
 identity_name = stock_names.get(selected_entity, "") if analyze_by == "Stock" else selected_entity
-st.markdown(
-    '<div class="institutional-header">'
-    '<div class="identity-block">'
-    '<div class="page-eyebrow">Ownership intelligence / monthly monitoring</div>'
-    '<div class="identity-line">'
-    f'<div class="identity-code">{escape(str(identity_code))}</div>'
-    f'<div class="identity-name">{escape(str(identity_name))}</div>'
-    '</div>'
-    '<div class="identity-subtitle">KSEI-reported ownership movement and composition</div>'
-    '</div>'
-    '<div class="coverage-panel">'
-    f'<span class="coverage-mode">{escape(analyze_by)} analysis</span>'
-    f'<strong>{escape(coverage_label)}</strong>'
-    '<small>BEI data folders update automatically</small>'
-    '</div></div>',
-    unsafe_allow_html=True,
-)
-render_metric_strip(active_metrics, analyze_by, f"summary_{analyze_by}_{selected_entity}")
+render_terminal_header(identity_code, identity_name, analyze_by, active_metrics)
 
 
 ownership_tab, classification_tab, type_tab, monthly_change_tab = st.tabs(
@@ -585,11 +609,11 @@ with ownership_tab:
         section(
             "1% Ownership",
             f"{context_name} ownership movement",
-            "Each line is a reported holder." if analyze_by == "Stock" else "Each line is a stock held by this owner.",
+            None,
         )
         ownership_chart_column, snapshot_column = st.columns(
-            [2.45, 1],
-            gap="medium",
+            [3, 1],
+            gap="small",
         )
         with ownership_chart_column:
             st.plotly_chart(
@@ -623,6 +647,7 @@ with ownership_tab:
             "comma",
             f"ownership_shares_pivot_{analyze_by}_{selected_entity}",
             holder_links=analyze_by == "Stock",
+            append_delta=True,
         )
 
         table_heading("Monthly change (%)", separated=True)
@@ -846,7 +871,7 @@ with type_tab:
                         "Domestic and foreign ownership",
                         "Number of scripless shares",
                         type_dates,
-                        color_map={"Domestic": "#0F766E", "Foreign": "#2563EB"},
+                        color_map={"Domestic": "#00C781", "Foreign": "#3182F6"},
                     ),
                     width="stretch",
                     config=PLOT_CONFIG,
