@@ -168,9 +168,10 @@ def section(kicker: str, heading: str, note: str | None = None) -> None:
         st.caption(note)
 
 
-def table_heading(heading: str) -> None:
+def table_heading(heading: str, separated: bool = False) -> None:
+    heading_class = "table-heading table-heading-separated" if separated else "table-heading"
     st.markdown(
-        f'<div class="table-heading">{escape(heading)}</div>',
+        f'<div class="{heading_class}">{escape(heading)}</div>',
         unsafe_allow_html=True,
     )
 
@@ -457,7 +458,7 @@ with ownership_tab:
             holder_links=analyze_by == "Stock",
         )
 
-        table_heading("Monthly change (%)")
+        table_heading("Monthly change (%)", separated=True)
         render_pivot(
             ownership_change,
             "series_label",
@@ -468,7 +469,7 @@ with ownership_tab:
             heatmap=True,
         )
 
-        table_heading("Ownership percentage")
+        table_heading("Ownership percentage", separated=True)
         percentage_pivot = historical_pivot(
             history,
             "series_label",
@@ -539,7 +540,7 @@ with classification_tab:
                 f"classification_shares_{selected_entity}",
             )
 
-            table_heading("Monthly change (%)")
+            table_heading("Monthly change (%)", separated=True)
             render_pivot(
                 classification_change,
                 "classification",
@@ -550,7 +551,7 @@ with classification_tab:
             )
 
             if classification_history["ownership_pct"].notna().any():
-                table_heading("Percentage of scripless ownership")
+                table_heading("Percentage of scripless ownership", separated=True)
                 classification_pct = historical_pivot(
                     classification_history,
                     "classification",
@@ -634,7 +635,7 @@ with type_tab:
                     f"share_form_pivot_{selected_entity}",
                     compact=True,
                 )
-                table_heading("Monthly change (%)")
+                table_heading("Monthly change (%)", separated=True)
                 render_pivot(
                     share_form_change,
                     "share_type",
@@ -694,7 +695,7 @@ with type_tab:
                     f"residency_shares_{selected_entity}",
                     compact=True,
                 )
-                table_heading("Monthly change (%)")
+                table_heading("Monthly change (%)", separated=True)
                 render_pivot(
                     residency_change,
                     "domestic_foreign",
@@ -704,7 +705,7 @@ with type_tab:
                     compact=True,
                     heatmap=True,
                 )
-                table_heading("Percentage of total shares")
+                table_heading("Percentage of total shares", separated=True)
                 render_pivot(
                     residency_pct,
                     "domestic_foreign",
