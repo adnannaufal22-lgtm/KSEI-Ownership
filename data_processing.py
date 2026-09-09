@@ -668,8 +668,17 @@ def historical_pivot(
 
 
 def classification_stock_history(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    scoped = data[data["ticker"].eq(ticker)].copy()
+    if scoped.empty:
+        return scoped
+    active_classifications = (
+        scoped.groupby("classification", observed=True)["ownership_units"]
+        .apply(lambda values: values.fillna(0).abs().sum())
+        .loc[lambda values: values.gt(0)]
+        .index
+    )
     return (
-        data[data["ticker"].eq(ticker)]
+        scoped[scoped["classification"].isin(active_classifications)]
         .sort_values(["date", "classification"])
         .reset_index(drop=True)
     )

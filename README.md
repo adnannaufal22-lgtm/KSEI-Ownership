@@ -14,8 +14,8 @@ Choose one global entity in the sidebar: either one Stock or one Owner. That sel
 
 1. **1% Ownership** — holder/stock history chart, number-of-shares pivot, and ownership-percentage pivot.
 2. **Classification** — dynamic investor-classification history and matching pivots.
-3. **Type** — scrip versus scripless history, Domestic versus Foreign history, and matching pivots.
-4. **Monthly Change** — period-over-period movement and a counterparty pivot.
+3. **Type** — scrip versus scripless and Domestic versus Foreign charts with their pivots placed alongside.
+4. **Monthly Change** — period-over-period movement charts without a duplicate table.
 
 Classification and Type are stock-level source datasets, so those tabs explain that individual owner analysis is unavailable when Analyze By is set to Owner.
 
@@ -40,6 +40,7 @@ The dashboard automatically:
 - consolidates high-confidence holder aliases using legal-name normalization and exact adjacent-month share continuity;
 - keeps missing monthly observations blank instead of turning them into zero;
 - formats displayed share values with comma separators;
+- shades pivot cells light green, yellow, or red for increases, no change, or decreases;
 - provides clickable holder links that switch the global analysis to that owner.
 
 ## Manual start

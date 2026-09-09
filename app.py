@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from html import escape
 from pathlib import Path
 from urllib.parse import quote
 
@@ -25,7 +26,6 @@ from data_processing import (
     classification_stock_history,
     entity_monthly_movement,
     historical_pivot,
-    movement_pivot_table,
     selected_ownership_history,
     standardize_dataframe,
     type_residency_history,
@@ -174,45 +174,69 @@ def render_pivot(
     number_format: str,
     key: str,
     holder_links: bool = False,
+    compact: bool = False,
 ) -> None:
     if pivot.empty:
         st.info("No pivot data is available for this selection.")
         return
     view = pivot.rename(columns={source_row_column: row_label}).copy()
-    column_config: dict = {}
-    if holder_links:
-        view[row_label] = view[row_label].map(
-            lambda holder: f"?holder={quote(str(holder), safe='')}#holder={holder}"
-        )
-        column_config[row_label] = st.column_config.LinkColumn(
-            row_label,
-            pinned=True,
-            display_text=r".*#holder=(.*)",
-            help="Open this owner across all reported stocks.",
-        )
-    else:
-        column_config[row_label] = st.column_config.TextColumn(row_label, pinned=True)
-    for column in view.columns:
-        if column == row_label:
-            continue
+    value_columns = [column for column in view.columns if column != row_label]
+
+    def display_value(value: object) -> str:
+        if pd.isna(value):
+            return ""
+        numeric = float(value)
         if number_format == "comma":
-            view[column] = view[column].map(
-                lambda value: "" if pd.isna(value) else f"{value:,.0f}"
-            )
-            column_config[column] = st.column_config.TextColumn(column)
-        else:
-            column_config[column] = st.column_config.NumberColumn(
-                column,
-                format=number_format,
-            )
-    st.dataframe(
-        view,
-        width="stretch",
-        hide_index=True,
-        height=min(540, max(180, 42 + len(view) * 34)),
-        column_config=column_config,
-        key=key,
+            return f"{numeric:,.0f}"
+        if number_format == "%.2f%%":
+            return f"{numeric:.2f}%"
+        if number_format == "%+.2f":
+            return f"{numeric:+.2f}"
+        return str(value)
+
+    def movement_class(current: object, previous: object) -> str:
+        if pd.isna(current) or pd.isna(previous):
+            return "change-missing"
+        current_number = float(current)
+        previous_number = float(previous)
+        tolerance = 1e-9 * max(1.0, abs(current_number), abs(previous_number))
+        if abs(current_number - previous_number) <= tolerance:
+            return "change-flat"
+        return "change-up" if current_number > previous_number else "change-down"
+
+    header_cells = "".join(
+        f"<th>{escape(str(column))}</th>" for column in [row_label, *value_columns]
     )
+    body_rows: list[str] = []
+    for _, row in view.iterrows():
+        raw_label = str(row[row_label])
+        label_text = escape(raw_label)
+        if holder_links:
+            holder_query = escape(quote(raw_label, safe=""), quote=True)
+            label_text = (
+                f'<a href="/?holder={holder_query}" target="_top" '
+                f'title="Analyze {escape(raw_label, quote=True)}">{label_text}</a>'
+            )
+        cells = [f'<td class="pivot-row-label">{label_text}</td>']
+        previous: object = pd.NA
+        for column in value_columns:
+            current = row[column]
+            css_class = movement_class(current, previous)
+            cells.append(
+                f'<td class="pivot-value {css_class}">{escape(display_value(current))}</td>'
+            )
+            previous = current
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    container_class = "pivot-scroll compact-pivot" if compact else "pivot-scroll"
+    table_html = (
+        f'<div class="{container_class}" data-pivot-key="{escape(key, quote=True)}">'
+        '<table class="movement-pivot">'
+        f"<thead><tr>{header_cells}</tr></thead>"
+        f"<tbody>{''.join(body_rows)}</tbody>"
+        "</table></div>"
+    )
+    st.markdown(table_html, unsafe_allow_html=True)
 
 
 with st.spinner("Loading monthly ownership history…"):
@@ -493,6 +517,7 @@ with type_tab:
         if type_summary.empty:
             st.info(f"No Type ownership history is available for {selected_entity}.")
         else:
+            type_dates = sorted(pd.Timestamp(value) for value in type_data["date"].dropna().unique())
             section(
                 "Type · Share form",
                 f"{context_name} scrip versus scripless movement",
@@ -502,65 +527,103 @@ with type_tab:
                 st.warning(
                     "Scrip shares are unavailable for one or more periods because Total Scripless exceeds Number of Shares in the source."
                 )
-            st.plotly_chart(
-                scrip_vs_scripless_chart(
-                    type_summary,
-                    f"{context_name} · Scrip and scripless shares",
-                ),
-                width="stretch",
-                config=PLOT_CONFIG,
-                key=f"scrip_chart_{selected_entity}",
+            share_form_history = type_summary.melt(
+                id_vars=["date"],
+                value_vars=["total_scripless", "scrip_shares"],
+                var_name="share_type",
+                value_name="ownership_units",
             )
+            share_form_history["share_type"] = share_form_history["share_type"].map(
+                {
+                    "total_scripless": "Scripless shares",
+                    "scrip_shares": "Scrip shares",
+                }
+            )
+            share_form_pivot = historical_pivot(
+                share_form_history,
+                "share_type",
+                "ownership_units",
+                type_dates,
+            )
+            share_form_chart_column, share_form_pivot_column = st.columns(
+                [1.25, 1],
+                gap="medium",
+            )
+            with share_form_chart_column:
+                st.plotly_chart(
+                    scrip_vs_scripless_chart(
+                        type_summary,
+                        "Scrip and scripless shares",
+                    ),
+                    width="stretch",
+                    config=PLOT_CONFIG,
+                    key=f"scrip_chart_{selected_entity}",
+                )
+            with share_form_pivot_column:
+                section("Pivot", "Number of shares by form")
+                render_pivot(
+                    share_form_pivot,
+                    "share_type",
+                    "Type",
+                    "comma",
+                    f"share_form_pivot_{selected_entity}",
+                    compact=True,
+                )
 
             section(
                 "Type · Residency",
                 f"{context_name} domestic versus foreign movement",
                 "Domestic and Foreign come from the explicit source groups.",
             )
-            type_dates = sorted(pd.Timestamp(value) for value in type_data["date"].dropna().unique())
-            st.plotly_chart(
-                stacked_area_line_chart(
-                    residency_history,
-                    "domestic_foreign",
-                    f"{context_name} · Domestic and foreign ownership",
-                    "Number of scripless shares",
-                    type_dates,
-                    color_map={"Domestic": "#0F766E", "Foreign": "#2563EB"},
-                ),
-                width="stretch",
-                config=PLOT_CONFIG,
-                key=f"residency_chart_{selected_entity}",
-            )
-
-            section("Pivot 1", "Number of shares by residency")
             residency_shares = historical_pivot(
                 residency_history,
                 "domestic_foreign",
                 "ownership_units",
                 type_dates,
             )
-            render_pivot(
-                residency_shares,
-                "domestic_foreign",
-                "Type",
-                "comma",
-                f"residency_shares_{selected_entity}",
-            )
-
-            section("Pivot 2", "Percentage of total shares")
             residency_pct = historical_pivot(
                 residency_history,
                 "domestic_foreign",
                 "ownership_pct",
                 type_dates,
             )
-            render_pivot(
-                residency_pct,
-                "domestic_foreign",
-                "Type",
-                "%.2f%%",
-                f"residency_pct_{selected_entity}",
+            residency_chart_column, residency_pivot_column = st.columns(
+                [1.25, 1],
+                gap="medium",
             )
+            with residency_chart_column:
+                st.plotly_chart(
+                    stacked_area_line_chart(
+                        residency_history,
+                        "domestic_foreign",
+                        "Domestic and foreign ownership",
+                        "Number of scripless shares",
+                        type_dates,
+                        color_map={"Domestic": "#0F766E", "Foreign": "#2563EB"},
+                    ),
+                    width="stretch",
+                    config=PLOT_CONFIG,
+                    key=f"residency_chart_{selected_entity}",
+                )
+            with residency_pivot_column:
+                section("Pivot 1", "Number of shares by residency")
+                render_pivot(
+                    residency_shares,
+                    "domestic_foreign",
+                    "Type",
+                    "comma",
+                    f"residency_shares_{selected_entity}",
+                    compact=True,
+                )
+                section("Pivot 2", "Percentage of total shares")
+                render_pivot(
+                    residency_pct,
+                    "domestic_foreign",
+                    "Type",
+                    "%.2f%%",
+                    f"residency_pct_{selected_entity}",
+                    compact=True,
+                )
             st.caption("Domestic and Foreign reconcile to Total Scripless; percentages use Number of Shares as the denominator.")
 
 
@@ -604,19 +667,3 @@ with monthly_change_tab:
             config=PLOT_CONFIG,
             key=f"monthly_breakdown_{analyze_by}_{selected_entity}",
         )
-
-        section("Pivot", f"Monthly change by {counterparty_label.lower()}")
-        change_pivot = movement_pivot_table(
-            breakdown,
-            movement_metric,
-            "Monthly change",
-        ).rename(columns={"counterparty": counterparty_label})
-        render_pivot(
-            change_pivot,
-            counterparty_label,
-            counterparty_label,
-            "comma" if movement_metric == "Reported shares" else "%+.2f",
-            f"monthly_change_pivot_{analyze_by}_{selected_entity}",
-            holder_links=counterparty_label == "Holder",
-        )
-        st.caption("The first observed period is blank because it has no preceding comparison month.")

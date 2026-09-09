@@ -13,7 +13,7 @@
 
 .block-container {
   max-width: 1540px;
-  padding: .8rem 1.2rem 2rem;
+  padding: 3rem 1.2rem 2rem;
 }
 
 #MainMenu,
@@ -194,10 +194,113 @@ div[data-baseweb="select"] > div:focus-within {
   border-radius: 4px;
 }
 
-[data-testid="stDataFrame"] {
+.pivot-scroll {
+  width: 100%;
+  max-height: 450px;
+  overflow: auto;
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 4px;
+}
+
+.movement-pivot {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  color: var(--ink);
+  font-size: .76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.movement-pivot th,
+.movement-pivot td {
+  min-width: 108px;
+  padding: .55rem .65rem;
+  border-left: 0;
+  border-right: 0;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.movement-pivot thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  color: #475569;
+  background: #fff;
+  border-top: 0;
+  border-bottom: 3px double #94a3b8;
+  font-size: .7rem;
+  font-weight: 750;
+}
+
+.movement-pivot tbody td {
+  border-top: 0;
+  border-bottom: 1px solid #edf1f5;
+}
+
+.movement-pivot tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.movement-pivot th:first-child,
+.movement-pivot .pivot-row-label {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-width: 220px;
+  max-width: 320px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+.movement-pivot th:first-child {
+  z-index: 4;
+}
+
+.movement-pivot .pivot-row-label {
+  background: #fff;
+  font-weight: 600;
+}
+
+.movement-pivot .pivot-row-label a {
+  color: #1d4ed8;
+  text-decoration: none;
+}
+
+.movement-pivot .pivot-row-label a:hover {
+  text-decoration: underline;
+}
+
+.movement-pivot .change-up {
+  background: #ecfdf3;
+}
+
+.movement-pivot .change-down {
+  background: #fef2f2;
+}
+
+.movement-pivot .change-flat {
+  background: #fffbeb;
+}
+
+.movement-pivot .change-missing {
+  background: #fff;
+  color: #94a3b8;
+}
+
+.compact-pivot .movement-pivot th,
+.compact-pivot .movement-pivot td {
+  min-width: 84px;
+  padding: .5rem .45rem;
+}
+
+.compact-pivot .movement-pivot th:first-child,
+.compact-pivot .movement-pivot .pivot-row-label {
+  min-width: 140px;
+  max-width: 165px;
 }
 
 [data-testid="stAlert"] {
@@ -211,7 +314,7 @@ div[data-baseweb="select"] > div:focus-within {
 
 @media (max-width: 900px) {
   .block-container {
-    padding: .85rem;
+    padding: 3rem .85rem 1.5rem;
   }
 
   .dashboard-header {
@@ -223,5 +326,11 @@ div[data-baseweb="select"] > div:focus-within {
     min-width: 0;
     max-width: 100%;
     text-align: left;
+  }
+
+  .movement-pivot th:first-child,
+  .movement-pivot .pivot-row-label {
+    min-width: 175px;
+    max-width: 220px;
   }
 }

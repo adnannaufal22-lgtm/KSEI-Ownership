@@ -467,18 +467,19 @@ def stacked_area_line_chart(
     figure.update_xaxes(title=None, tickformat="%b-%y")
     figure.update_yaxes(title=y_title, tickformat=",.0f")
     styled = _style(figure, height=430, legend=True)
-    styled.update_layout(
-        legend={
-            "orientation": "v",
-            "x": 1.01,
-            "xanchor": "left",
-            "y": 1,
-            "yanchor": "top",
-            "font": {"size": 8.5},
-            "title": {"text": ""},
-        },
-        margin={"l": 6, "r": 245, "t": 42, "b": 12},
-    )
+    if len(categories) > 4:
+        styled.update_layout(
+            legend={
+                "orientation": "v",
+                "x": 1.01,
+                "xanchor": "left",
+                "y": 1,
+                "yanchor": "top",
+                "font": {"size": 8.5},
+                "title": {"text": ""},
+            },
+            margin={"l": 6, "r": 245, "t": 42, "b": 12},
+        )
     return _monthly_ticks(styled, dates)
 
 
