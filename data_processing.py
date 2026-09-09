@@ -654,6 +654,7 @@ def historical_pivot(
         values=value_column,
         aggfunc="sum",
         dropna=False,
+        observed=True,
     )
     pivot = pivot.reindex(columns=dates)
     if dates:
