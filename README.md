@@ -12,12 +12,13 @@ Double-click **Open Dashboard.bat**. The first launch creates the local environm
 
 ## Dashboard structure
 
-Choose one global entity in the sidebar: either one Stock or one Owner. That selection drives exactly four tabs:
+Choose one Stock or one Owner from the selectors in the dashboard header. That selection drives the entity-specific tabs, while the market-wide Monthly Changes tab scans the complete ownership dataset:
 
 1. **1% Ownership** — holder/stock history chart, number-of-shares pivot, and ownership-percentage pivot.
 2. **Classification** — dynamic investor-classification history and matching pivots.
 3. **Type** — scrip versus scripless and Domestic versus Foreign charts with their pivots placed alongside.
-4. **Monthly Change** — period-over-period movement charts without a duplicate table.
+4. **Entity Movement** — period-over-period movement charts for the selected stock or owner.
+5. **Monthly Changes** — month selector, compact market summary, Top 10/all stock and owner rankings, and clickable row drill-downs showing the counterparties behind each reported change.
 
 Classification and Type are stock-level source datasets, so those tabs explain that individual owner analysis is unavailable when Analyze By is set to Owner.
 
@@ -45,6 +46,7 @@ The dashboard automatically:
 - shades pivot cells light green, yellow, or red for increases, no change, or decreases;
 - adds a month-over-month percentage-change heatmap below every number-of-shares pivot;
 - provides clickable holder links that switch the global analysis to that owner.
+- preprocesses consecutive monthly ownership snapshots once and reuses them for market-wide stock-to-owner and owner-to-stock change analysis.
 
 ## Manual start
 

@@ -11,6 +11,11 @@ from data_loader import (
     load_type_folder,
 )
 from data_processing import standardize_dataframe
+from monthly_changes import (
+    build_monthly_change_detail,
+    owner_change_summary,
+    stock_change_summary,
+)
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -58,6 +63,28 @@ def main() -> None:
         f"canonical holders: {ownership['investor_name'].nunique():,}; "
         f"aliases merged: {aliases.get('aliases_merged', 0):,}."
     )
+    ownership_periods = sorted(
+        pd.Timestamp(value) for value in ownership["date"].dropna().unique()
+    )
+    if len(ownership_periods) > 1:
+        change_detail = build_monthly_change_detail(ownership)
+        if change_detail.duplicated(["date", "stock", "owner"]).any():
+            raise ValueError("Monthly Changes contains duplicate stock-owner comparisons.")
+        if change_detail["previous_date"].ge(change_detail["date"]).any():
+            raise ValueError("Monthly Changes comparison periods are not chronological.")
+        stock_changes = stock_change_summary(change_detail)
+        owner_changes = owner_change_summary(change_detail)
+        latest_period = ownership_periods[-1]
+        latest_detail = change_detail[
+            change_detail["date"].eq(latest_period) & change_detail["is_changed"]
+        ]
+        print(
+            f"Monthly Changes: {latest_period:%b %Y} versus "
+            f"{ownership_periods[-2]:%b %Y}; "
+            f"{latest_detail['stock'].nunique():,} stocks and "
+            f"{latest_detail['owner'].nunique():,} owners with reported changes."
+        )
+        del change_detail, stock_changes, owner_changes, latest_detail
     del raw
 
     classification, classification_meta = load_classification_folder(

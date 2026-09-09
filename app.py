@@ -32,6 +32,11 @@ from data_processing import (
     type_residency_history,
     type_stock_summary,
 )
+from monthly_changes import (
+    build_monthly_change_detail,
+    owner_change_summary,
+    stock_change_summary,
+)
 from utils import compact_number
 
 
@@ -49,7 +54,7 @@ st.set_page_config(
     page_title="KSEI Ownership Dashboard",
     page_icon="ℹ️",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 st.markdown(
     f"<style>{(APP_DIR / 'styles.css').read_text(encoding='utf-8')}</style>",
@@ -87,6 +92,15 @@ def load_type_dataset(
     config_text: str,
 ) -> tuple[pd.DataFrame, dict]:
     return load_type_folder(folder, json.loads(config_text))
+
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def monthly_change_analysis(
+    ownership: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Derive reusable monthly activity tables from normalized ownership data."""
+    detail = build_monthly_change_detail(ownership)
+    return detail, stock_change_summary(detail), owner_change_summary(detail)
 
 
 def empty_ownership_data() -> pd.DataFrame:
@@ -458,6 +472,139 @@ def render_latest_snapshot(
     )
 
 
+def render_dashboard_masthead(
+    analyze_by: str,
+    selected_entity: str,
+    ownership_metadata: dict,
+    classification_metadata: dict,
+    type_metadata: dict,
+    latest_period: object,
+) -> None:
+    st.markdown(
+        '<div class="dashboard-masthead">'
+        '<div class="dashboard-heading">'
+        '<span>KSEI OWNERSHIP</span>'
+        f'<strong>— {escape(str(selected_entity))}</strong>'
+        '</div>'
+        '<div class="dashboard-coverage">'
+        f'<span>MODE <b>{escape(analyze_by.upper())}</b></span>'
+        f'<span>OWN <b>{int(ownership_metadata.get("source_files", 0))}</b></span>'
+        f'<span>CLASS <b>{int(classification_metadata.get("source_files", 0))}</b></span>'
+        f'<span>TYPE <b>{int(type_metadata.get("source_files", 0))}</b></span>'
+        f'<span>UPDATED <b>{escape(str(latest_period))}</b></span>'
+        '<span class="coverage-connected"><i></i>DATA CONNECTED</span>'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def movement_cell_style(value: object) -> str:
+    if pd.isna(value):
+        return "color:#8998A8;"
+    numeric = float(value)
+    if numeric > 1e-9:
+        return "color:#00C781;background-color:rgba(0,199,129,.075);"
+    if numeric < -1e-9:
+        return "color:#FF5A52;background-color:rgba(255,90,82,.075);"
+    return "color:#8998A8;"
+
+
+def render_activity_dataframe(
+    data: pd.DataFrame,
+    key: str,
+    formatters: dict[str, object],
+    directional_columns: list[str],
+    name_columns: list[str],
+    selectable: bool = False,
+    max_height: int = 460,
+) -> list[int]:
+    """Render a compact terminal table and return any selected row positions."""
+    if data.empty:
+        st.info("No ownership changes are available for this comparison.")
+        return []
+    view = data.reset_index(drop=True)
+    styled = view.style.format(formatters, na_rep="—")
+    for column in directional_columns:
+        if column in view:
+            styled = styled.map(movement_cell_style, subset=[column])
+    for column in name_columns:
+        if column in view:
+            styled = styled.set_properties(
+                subset=[column],
+                **{"color": "#3182F6", "font-weight": "650"},
+            )
+    height = min(max_height, 39 + 35 * len(view))
+    if selectable:
+        event = st.dataframe(
+            styled,
+            width="stretch",
+            height=height,
+            hide_index=True,
+            row_height=34,
+            key=key,
+            on_select="rerun",
+            selection_mode="single-row",
+        )
+        return list(event.selection.rows)
+    st.dataframe(
+        styled,
+        width="stretch",
+        height=height,
+        hide_index=True,
+        row_height=34,
+        key=key,
+    )
+    return []
+
+
+def render_monthly_change_kpis(
+    stock_summary: pd.DataFrame,
+    detail: pd.DataFrame,
+    current_date: pd.Timestamp,
+    previous_date: pd.Timestamp,
+) -> None:
+    increases = stock_summary[stock_summary["net_change"].gt(0.5)]
+    decreases = stock_summary[stock_summary["net_change"].lt(-0.5)]
+    largest_increase = (
+        increases.loc[increases["net_change"].idxmax()] if not increases.empty else None
+    )
+    largest_decrease = (
+        decreases.loc[decreases["net_change"].idxmin()] if not decreases.empty else None
+    )
+
+    def change_card(label: str, row: pd.Series | None, css_class: str) -> str:
+        if row is None:
+            return (
+                '<div class="monthly-kpi"><span>' + escape(label) + '</span>'
+                '<strong>—</strong><small>NO NET CHANGE</small></div>'
+            )
+        value = float(row["net_change"])
+        sign = "+" if value > 0 else "−"
+        return (
+            '<div class="monthly-kpi"><span>' + escape(label) + '</span>'
+            f'<strong>{escape(str(row["stock"]))}</strong>'
+            f'<small class="{css_class}">{sign}{terminal_number(abs(value))} SHARES</small></div>'
+        )
+
+    st.markdown(
+        '<div class="monthly-period-strip">'
+        f'<strong>{current_date:%B %Y}</strong>'
+        f'<span>COMPARED WITH {previous_date:%B %Y}</span>'
+        '<em>REPORTED KSEI SNAPSHOT CHANGES</em></div>'
+        '<div class="monthly-kpi-grid">'
+        '<div class="monthly-kpi"><span>STOCKS CHANGED</span>'
+        f'<strong>{stock_summary["stock"].nunique():,}</strong>'
+        '<small>WITH REPORTED MOVEMENT</small></div>'
+        '<div class="monthly-kpi"><span>ACTIVE OWNERS</span>'
+        f'<strong>{detail["owner"].nunique():,}</strong>'
+        '<small>ACROSS ALL STOCKS</small></div>'
+        f'{change_card("LARGEST INCREASE", largest_increase, "terminal-positive")}'
+        f'{change_card("LARGEST DECREASE", largest_decrease, "terminal-negative")}'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
 with st.spinner("Loading monthly ownership history…"):
     (
         ownership_data,
@@ -509,21 +656,24 @@ if holder_link_target:
         st.session_state["selected_owner"] = holder_link_target
     st.query_params.clear()
 
-with st.sidebar:
-    st.markdown(
-        '<div class="sidebar-brand">'
-        '<div class="ksei-wordmark">KSEI</div>'
-        '<div class="ksei-market">OWNERSHIP MONITOR</div>'
-        '<div class="sidebar-brand-rule"></div>'
-        '</div>'
-        '<div class="sidebar-section-label">ANALYSIS</div>',
-        unsafe_allow_html=True,
-    )
+st.markdown(
+    '<div class="dashboard-brandbar">'
+    '<span class="dashboard-wordmark">KSEI</span>'
+    '<span>OWNERSHIP DASHBOARD</span>'
+    '<em>INDONESIA CAPITAL MARKET MONITOR</em>'
+    '</div>',
+    unsafe_allow_html=True,
+)
+
+selector_mode_column, selector_entity_column = st.columns([1, 4], gap="medium")
+with selector_mode_column:
     analyze_by = st.selectbox(
         "Analyze By",
         ["Stock", "Owner"],
         key="analysis_mode",
     )
+
+with selector_entity_column:
     if analyze_by == "Stock":
         if not stock_options:
             st.error("No stock codes were found in the ownership folders.")
@@ -548,19 +698,15 @@ with st.sidebar:
             key="selected_owner",
         )
 
-    active_metrics = selection_metrics(ownership_data, analyze_by, selected_entity)
-    st.markdown(
-        '<div class="sidebar-rule"></div>'
-        '<div class="sidebar-section-label">DATA COVERAGE</div>'
-        '<div class="sidebar-source-grid">'
-        f'<span>Ownership files</span><strong>{ownership_metadata.get("source_files", 0)}</strong>'
-        f'<span>Classification files</span><strong>{classification_metadata.get("source_files", 0)}</strong>'
-        f'<span>Type files</span><strong>{type_metadata.get("source_files", 0)}</strong>'
-        f'<span>Latest</span><strong>{escape(str(active_metrics["latest_period"]))}</strong>'
-        '</div>'
-        '<div class="sidebar-status"><span></span>DATA CONNECTED</div>',
-        unsafe_allow_html=True,
-    )
+active_metrics = selection_metrics(ownership_data, analyze_by, selected_entity)
+render_dashboard_masthead(
+    analyze_by,
+    selected_entity,
+    ownership_metadata,
+    classification_metadata,
+    type_metadata,
+    active_metrics["latest_period"],
+)
 
 
 if analyze_by == "Stock":
@@ -591,8 +737,8 @@ identity_name = stock_names.get(selected_entity, "") if analyze_by == "Stock" el
 render_terminal_header(identity_code, identity_name, analyze_by, active_metrics)
 
 
-ownership_tab, classification_tab, type_tab, monthly_change_tab = st.tabs(
-    ["1% Ownership", "Classification", "Type", "Monthly Change"]
+ownership_tab, classification_tab, type_tab, entity_movement_tab, monthly_changes_tab = st.tabs(
+    ["1% Ownership", "Classification", "Type", "Entity Movement", "Monthly Changes"]
 )
 
 
@@ -909,7 +1055,7 @@ with type_tab:
             st.caption("Domestic and Foreign reconcile to Total Scripless; percentages use Number of Shares as the denominator.")
 
 
-with monthly_change_tab:
+with entity_movement_tab:
     entity_column = "ticker" if analyze_by == "Stock" else "investor_name"
     monthly, breakdown, counterparty_label = entity_monthly_movement(
         ownership_data,
@@ -949,3 +1095,270 @@ with monthly_change_tab:
             config=PLOT_CONFIG,
             key=f"monthly_breakdown_{analyze_by}_{selected_entity}",
         )
+
+
+with monthly_changes_tab:
+    comparison_dates = sorted(
+        pd.Timestamp(value) for value in ownership_data["date"].dropna().unique()
+    )
+    if len(comparison_dates) < 2:
+        st.info("At least two ownership reporting months are required for market-wide changes.")
+    else:
+        heading_column, month_column = st.columns([4, 1.2], gap="large")
+        with heading_column:
+            section(
+                "Market-wide activity",
+                "Monthly Changes",
+                "Ranked from consecutive reported KSEI ownership snapshots.",
+            )
+        with month_column:
+            selected_change_month = st.selectbox(
+                "Reporting Month",
+                comparison_dates[1:],
+                index=len(comparison_dates) - 2,
+                format_func=lambda value: pd.Timestamp(value).strftime("%B %Y"),
+                key="market_change_month",
+            )
+
+        selected_change_month = pd.Timestamp(selected_change_month)
+        previous_change_month = max(
+            value for value in comparison_dates if value < selected_change_month
+        )
+        with st.spinner("Preparing market-wide ownership changes…"):
+            change_detail, stock_changes, owner_changes = monthly_change_analysis(
+                ownership_data
+            )
+        period_detail = change_detail[
+            change_detail["date"].eq(selected_change_month)
+            & change_detail["is_changed"]
+        ].copy()
+        period_stocks = (
+            stock_changes[stock_changes["date"].eq(selected_change_month)]
+            .sort_values(["absolute_change", "stock"], ascending=[False, True])
+            .reset_index(drop=True)
+        )
+        period_owners = (
+            owner_changes[owner_changes["date"].eq(selected_change_month)]
+            .sort_values(["absolute_change", "owner"], ascending=[False, True])
+            .reset_index(drop=True)
+        )
+
+        render_monthly_change_kpis(
+            period_stocks,
+            period_detail,
+            selected_change_month,
+            previous_change_month,
+        )
+        st.caption(
+            "Changes describe reported 1% Ownership snapshots, not confirmed exchange transactions. "
+            "Newly or no-longer-reported holders may have crossed the reporting threshold; their legal holding is not assumed to be zero."
+        )
+
+        table_heading("Stocks with largest ownership changes", separated=True)
+        stock_controls = st.columns([3, 1], gap="large")
+        with stock_controls[0]:
+            st.caption(
+                "Ranked by total absolute holder-level share movement. Select a row to inspect the owners responsible."
+            )
+        with stock_controls[1]:
+            show_all_stocks = st.toggle(
+                f"Show all {len(period_stocks):,} stocks",
+                key=f"show_all_stocks_{selected_change_month:%Y%m}",
+            )
+
+        ranked_stocks = period_stocks.copy()
+        ranked_stocks.insert(0, "Rank", range(1, len(ranked_stocks) + 1))
+        visible_stocks = ranked_stocks if show_all_stocks else ranked_stocks.head(10)
+        stock_display = visible_stocks[
+            [
+                "Rank",
+                "stock",
+                "previous_shares",
+                "current_shares",
+                "net_change",
+                "percent_change",
+                "absolute_change",
+                "changing_holders",
+            ]
+        ].rename(
+            columns={
+                "stock": "Stock",
+                "previous_shares": "Previous Month",
+                "current_shares": "Current Month",
+                "net_change": "Net Change",
+                "percent_change": "% Change",
+                "absolute_change": "Total Movement",
+                "changing_holders": "Changing Holders",
+            }
+        )
+        selected_stock_rows = render_activity_dataframe(
+            stock_display,
+            f"market_stock_changes_{selected_change_month:%Y%m}_{show_all_stocks}",
+            {
+                "Previous Month": "{:,.0f}",
+                "Current Month": "{:,.0f}",
+                "Net Change": lambda value: "0" if abs(value) < 0.5 else f"{value:+,.0f}",
+                "% Change": lambda value: "0.00%" if abs(value) < 1e-9 else f"{value:+.2f}%",
+                "Total Movement": "{:,.0f}",
+                "Changing Holders": "{:,.0f}",
+            },
+            ["Net Change", "% Change"],
+            ["Stock"],
+            selectable=True,
+            max_height=490,
+        )
+        if selected_stock_rows:
+            stock_row = visible_stocks.iloc[selected_stock_rows[0]]
+            stock_code = str(stock_row["stock"])
+            stock_detail = period_detail[period_detail["stock"].eq(stock_code)].copy()
+            stock_detail["_magnitude"] = stock_detail["change_shares"].abs()
+            stock_detail = stock_detail.sort_values(
+                ["_magnitude", "owner"], ascending=[False, True]
+            )
+            stock_detail_display = stock_detail[
+                [
+                    "owner",
+                    "previous_shares",
+                    "current_shares",
+                    "change_shares",
+                    "previous_percentage",
+                    "current_percentage",
+                    "change_percentage",
+                    "observation_status",
+                ]
+            ].rename(
+                columns={
+                    "owner": "Owner",
+                    "previous_shares": "Previous Shares",
+                    "current_shares": "Current Shares",
+                    "change_shares": "Change Shares",
+                    "previous_percentage": "Previous %",
+                    "current_percentage": "Current %",
+                    "change_percentage": "Change % (pp)",
+                    "observation_status": "Status",
+                }
+            )
+            table_heading(
+                f"{stock_code} · owners with reported changes",
+                separated=True,
+            )
+            render_activity_dataframe(
+                stock_detail_display,
+                f"market_stock_detail_{selected_change_month:%Y%m}_{stock_code}",
+                {
+                    "Previous Shares": "{:,.0f}",
+                    "Current Shares": "{:,.0f}",
+                    "Change Shares": lambda value: "0" if abs(value) < 0.5 else f"{value:+,.0f}",
+                    "Previous %": "{:.2f}%",
+                    "Current %": "{:.2f}%",
+                    "Change % (pp)": lambda value: "0.00 pp" if abs(value) < 1e-9 else f"{value:+.2f} pp",
+                },
+                ["Change Shares", "Change % (pp)"],
+                ["Owner"],
+                max_height=420,
+            )
+        else:
+            st.caption("Select a stock row to see which owners increased or decreased reported ownership.")
+
+        table_heading("Owners with largest monthly changes", separated=True)
+        owner_controls = st.columns([3, 1], gap="large")
+        with owner_controls[0]:
+            st.caption(
+                "Ranked by total absolute reported share movement across stocks. Select a row for the stock breakdown."
+            )
+        with owner_controls[1]:
+            show_all_owners = st.toggle(
+                f"Show all {len(period_owners):,} owners",
+                key=f"show_all_owners_{selected_change_month:%Y%m}",
+            )
+
+        ranked_owners = period_owners.copy()
+        ranked_owners.insert(0, "Rank", range(1, len(ranked_owners) + 1))
+        visible_owners = ranked_owners if show_all_owners else ranked_owners.head(10)
+        owner_display = visible_owners[
+            [
+                "Rank",
+                "owner",
+                "stocks_increased",
+                "stocks_decreased",
+                "absolute_change",
+                "net_change",
+                "stocks_changed",
+            ]
+        ].rename(
+            columns={
+                "owner": "Owner",
+                "stocks_increased": "Stocks Increased",
+                "stocks_decreased": "Stocks Decreased",
+                "absolute_change": "Total Absolute Change",
+                "net_change": "Net Change",
+                "stocks_changed": "Stocks Changed",
+            }
+        )
+        selected_owner_rows = render_activity_dataframe(
+            owner_display,
+            f"market_owner_changes_{selected_change_month:%Y%m}_{show_all_owners}",
+            {
+                "Stocks Increased": "{:,.0f}",
+                "Stocks Decreased": "{:,.0f}",
+                "Total Absolute Change": "{:,.0f}",
+                "Net Change": lambda value: "0" if abs(value) < 0.5 else f"{value:+,.0f}",
+                "Stocks Changed": "{:,.0f}",
+            },
+            ["Net Change"],
+            ["Owner"],
+            selectable=True,
+            max_height=490,
+        )
+        if selected_owner_rows:
+            owner_row = visible_owners.iloc[selected_owner_rows[0]]
+            owner_name = str(owner_row["owner"])
+            owner_detail = period_detail[period_detail["owner"].eq(owner_name)].copy()
+            owner_detail["_magnitude"] = owner_detail["change_shares"].abs()
+            owner_detail = owner_detail.sort_values(
+                ["_magnitude", "stock"], ascending=[False, True]
+            )
+            owner_detail_display = owner_detail[
+                [
+                    "stock",
+                    "previous_shares",
+                    "current_shares",
+                    "change_shares",
+                    "previous_percentage",
+                    "current_percentage",
+                    "change_percentage",
+                    "observation_status",
+                ]
+            ].rename(
+                columns={
+                    "stock": "Stock",
+                    "previous_shares": "Previous Shares",
+                    "current_shares": "Current Shares",
+                    "change_shares": "Change Shares",
+                    "previous_percentage": "Previous %",
+                    "current_percentage": "Current %",
+                    "change_percentage": "Change % (pp)",
+                    "observation_status": "Status",
+                }
+            )
+            table_heading(
+                f"{owner_name} · stocks with reported changes",
+                separated=True,
+            )
+            render_activity_dataframe(
+                owner_detail_display,
+                f"market_owner_detail_{selected_change_month:%Y%m}_{owner_name}",
+                {
+                    "Previous Shares": "{:,.0f}",
+                    "Current Shares": "{:,.0f}",
+                    "Change Shares": lambda value: "0" if abs(value) < 0.5 else f"{value:+,.0f}",
+                    "Previous %": "{:.2f}%",
+                    "Current %": "{:.2f}%",
+                    "Change % (pp)": lambda value: "0.00 pp" if abs(value) < 1e-9 else f"{value:+.2f} pp",
+                },
+                ["Change Shares", "Change % (pp)"],
+                ["Stock"],
+                max_height=420,
+            )
+        else:
+            st.caption("Select an owner row to see the stocks with reported ownership changes.")

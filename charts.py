@@ -403,7 +403,7 @@ def ownership_movement_lines(
     figure.update_layout(title={"text": title, "font": {"size": 14}})
     figure.update_xaxes(title=None, tickformat="%b-%y")
     figure.update_yaxes(title="Number of shares", tickformat=",.0f")
-    styled = _style(figure, height=420, legend=True)
+    styled = _style(figure, height=440, legend=True)
     styled.update_layout(
         legend={
             "orientation": "v",
