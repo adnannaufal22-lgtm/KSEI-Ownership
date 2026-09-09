@@ -668,6 +668,27 @@ def historical_pivot(
     return pivot.reset_index()
 
 
+def monthly_percentage_change_pivot(
+    level_pivot: pd.DataFrame,
+    row_column: str,
+) -> pd.DataFrame:
+    """Convert a chronological level pivot into month-over-month percentage changes."""
+    if level_pivot.empty:
+        return pd.DataFrame(columns=[row_column])
+    value_columns = [column for column in level_pivot.columns if column != row_column]
+    result = level_pivot[[row_column]].copy()
+    numeric_levels = level_pivot[value_columns].apply(pd.to_numeric, errors="coerce")
+    previous_levels = numeric_levels.shift(1, axis=1)
+    percentage_change = (numeric_levels - previous_levels) / previous_levels * 100
+    percentage_change = percentage_change.mask(
+        previous_levels.eq(0) & numeric_levels.eq(0),
+        0.0,
+    )
+    percentage_change = percentage_change.replace([np.inf, -np.inf], np.nan)
+    result[value_columns] = percentage_change
+    return result
+
+
 def classification_stock_history(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
     scoped = data[data["ticker"].eq(ticker)].copy()
     if scoped.empty:

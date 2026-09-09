@@ -26,6 +26,7 @@ from data_processing import (
     classification_stock_history,
     entity_monthly_movement,
     historical_pivot,
+    monthly_percentage_change_pivot,
     selected_ownership_history,
     standardize_dataframe,
     type_residency_history,
@@ -167,6 +168,13 @@ def section(kicker: str, heading: str, note: str | None = None) -> None:
         st.caption(note)
 
 
+def table_heading(heading: str) -> None:
+    st.markdown(
+        f'<div class="table-heading">{escape(heading)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_pivot(
     pivot: pd.DataFrame,
     source_row_column: str,
@@ -175,6 +183,7 @@ def render_pivot(
     key: str,
     holder_links: bool = False,
     compact: bool = False,
+    heatmap: bool = False,
 ) -> None:
     if pivot.empty:
         st.info("No pivot data is available for this selection.")
@@ -188,6 +197,10 @@ def render_pivot(
         numeric = float(value)
         if number_format == "comma":
             return f"{numeric:,.0f}"
+        if number_format == "signed_comma":
+            return "0" if abs(numeric) < 0.5 else f"{numeric:+,.0f}"
+        if number_format == "signed_pct":
+            return "0.00%" if abs(numeric) <= 1e-9 else f"{numeric:+.2f}%"
         if number_format == "%.2f%%":
             return f"{numeric:.2f}%"
         if number_format == "%+.2f":
@@ -203,6 +216,23 @@ def render_pivot(
         if abs(current_number - previous_number) <= tolerance:
             return "change-flat"
         return "change-up" if current_number > previous_number else "change-down"
+
+    numeric_values = pd.to_numeric(
+        pd.Series(view[value_columns].to_numpy().ravel()),
+        errors="coerce",
+    ).dropna()
+    heatmap_scale = float(numeric_values.abs().max()) if not numeric_values.empty else 0.0
+
+    def heatmap_style(value: object) -> str:
+        if pd.isna(value):
+            return ""
+        numeric = float(value)
+        if abs(numeric) <= 1e-9:
+            return "background-color:#fef9c3;color:#111827;"
+        ratio = min(abs(numeric) / heatmap_scale, 1.0) if heatmap_scale else 0.0
+        opacity = 0.14 + 0.38 * ratio**0.5
+        rgb = "34,197,94" if numeric > 0 else "239,68,68"
+        return f"background-color:rgba({rgb},{opacity:.3f});color:#111827;"
 
     header_cells = "".join(
         f"<th>{escape(str(column))}</th>" for column in [row_label, *value_columns]
@@ -221,9 +251,11 @@ def render_pivot(
         previous: object = pd.NA
         for column in value_columns:
             current = row[column]
-            css_class = movement_class(current, previous)
+            css_class = "heatmap-cell" if heatmap else movement_class(current, previous)
+            inline_style = heatmap_style(current) if heatmap else ""
             cells.append(
-                f'<td class="pivot-value {css_class}">{escape(display_value(current))}</td>'
+                f'<td class="pivot-value {css_class}" style="{inline_style}">'
+                f"{escape(display_value(current))}</td>"
             )
             previous = current
         body_rows.append("<tr>" + "".join(cells) + "</tr>")
@@ -405,13 +437,17 @@ with ownership_tab:
             key=f"ownership_lines_{analyze_by}_{selected_entity}",
         )
 
-        section("Pivot 1", "Number of shares")
         shares_pivot = historical_pivot(
             history,
             "series_label",
             "ownership_units",
             ownership_dates,
         )
+        ownership_change = monthly_percentage_change_pivot(
+            shares_pivot,
+            "series_label",
+        )
+        table_heading("Number of shares")
         render_pivot(
             shares_pivot,
             "series_label",
@@ -421,7 +457,18 @@ with ownership_tab:
             holder_links=analyze_by == "Stock",
         )
 
-        section("Pivot 2", "Ownership percentage")
+        table_heading("Monthly change (%)")
+        render_pivot(
+            ownership_change,
+            "series_label",
+            row_label,
+            "signed_pct",
+            f"ownership_change_pivot_{analyze_by}_{selected_entity}",
+            holder_links=analyze_by == "Stock",
+            heatmap=True,
+        )
+
+        table_heading("Ownership percentage")
         percentage_pivot = historical_pivot(
             history,
             "series_label",
@@ -473,13 +520,17 @@ with classification_tab:
                 key=f"classification_chart_{selected_entity}",
             )
 
-            section("Pivot 1", "Number of shares by classification")
             classification_shares = historical_pivot(
                 classification_history,
                 "classification",
                 "ownership_units",
                 classification_dates,
             )
+            classification_change = monthly_percentage_change_pivot(
+                classification_shares,
+                "classification",
+            )
+            table_heading("Number of shares by classification")
             render_pivot(
                 classification_shares,
                 "classification",
@@ -488,8 +539,18 @@ with classification_tab:
                 f"classification_shares_{selected_entity}",
             )
 
+            table_heading("Monthly change (%)")
+            render_pivot(
+                classification_change,
+                "classification",
+                "Classification",
+                "signed_pct",
+                f"classification_change_{selected_entity}",
+                heatmap=True,
+            )
+
             if classification_history["ownership_pct"].notna().any():
-                section("Pivot 2", "Percentage of scripless ownership")
+                table_heading("Percentage of scripless ownership")
                 classification_pct = historical_pivot(
                     classification_history,
                     "classification",
@@ -545,6 +606,10 @@ with type_tab:
                 "ownership_units",
                 type_dates,
             )
+            share_form_change = monthly_percentage_change_pivot(
+                share_form_pivot,
+                "share_type",
+            )
             share_form_chart_column, share_form_pivot_column = st.columns(
                 [1.25, 1],
                 gap="medium",
@@ -560,7 +625,7 @@ with type_tab:
                     key=f"scrip_chart_{selected_entity}",
                 )
             with share_form_pivot_column:
-                section("Pivot", "Number of shares by form")
+                table_heading("Number of shares by form")
                 render_pivot(
                     share_form_pivot,
                     "share_type",
@@ -568,6 +633,16 @@ with type_tab:
                     "comma",
                     f"share_form_pivot_{selected_entity}",
                     compact=True,
+                )
+                table_heading("Monthly change (%)")
+                render_pivot(
+                    share_form_change,
+                    "share_type",
+                    "Type",
+                    "signed_pct",
+                    f"share_form_change_{selected_entity}",
+                    compact=True,
+                    heatmap=True,
                 )
 
             section(
@@ -586,6 +661,10 @@ with type_tab:
                 "domestic_foreign",
                 "ownership_pct",
                 type_dates,
+            )
+            residency_change = monthly_percentage_change_pivot(
+                residency_shares,
+                "domestic_foreign",
             )
             residency_chart_column, residency_pivot_column = st.columns(
                 [1.25, 1],
@@ -606,7 +685,7 @@ with type_tab:
                     key=f"residency_chart_{selected_entity}",
                 )
             with residency_pivot_column:
-                section("Pivot 1", "Number of shares by residency")
+                table_heading("Number of shares by residency")
                 render_pivot(
                     residency_shares,
                     "domestic_foreign",
@@ -615,7 +694,17 @@ with type_tab:
                     f"residency_shares_{selected_entity}",
                     compact=True,
                 )
-                section("Pivot 2", "Percentage of total shares")
+                table_heading("Monthly change (%)")
+                render_pivot(
+                    residency_change,
+                    "domestic_foreign",
+                    "Type",
+                    "signed_pct",
+                    f"residency_change_{selected_entity}",
+                    compact=True,
+                    heatmap=True,
+                )
+                table_heading("Percentage of total shares")
                 render_pivot(
                     residency_pct,
                     "domestic_foreign",

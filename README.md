@@ -41,6 +41,7 @@ The dashboard automatically:
 - keeps missing monthly observations blank instead of turning them into zero;
 - formats displayed share values with comma separators;
 - shades pivot cells light green, yellow, or red for increases, no change, or decreases;
+- adds a month-over-month percentage-change heatmap below every number-of-shares pivot;
 - provides clickable holder links that switch the global analysis to that owner.
 
 ## Manual start

@@ -144,6 +144,14 @@ footer {
   margin: .02rem 0 .2rem;
 }
 
+.table-heading {
+  color: #111827;
+  font-size: .9rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin: .45rem 0 .25rem;
+}
+
 [data-testid="stWidgetLabel"] p {
   color: #475569;
   font-size: .73rem;
@@ -208,7 +216,7 @@ div[data-baseweb="select"] > div:focus-within {
   min-width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  color: var(--ink);
+  color: #111827;
   font-size: .76rem;
   font-variant-numeric: tabular-nums;
 }
@@ -227,7 +235,7 @@ div[data-baseweb="select"] > div:focus-within {
   position: sticky;
   top: 0;
   z-index: 3;
-  color: #475569;
+  color: #111827;
   background: #fff;
   border-top: 0;
   border-bottom: 3px double #94a3b8;
@@ -262,11 +270,12 @@ div[data-baseweb="select"] > div:focus-within {
 
 .movement-pivot .pivot-row-label {
   background: #fff;
+  color: #111827;
   font-weight: 600;
 }
 
 .movement-pivot .pivot-row-label a {
-  color: #1d4ed8;
+  color: #3b82f6;
   text-decoration: none;
 }
 
@@ -288,7 +297,7 @@ div[data-baseweb="select"] > div:focus-within {
 
 .movement-pivot .change-missing {
   background: #fff;
-  color: #94a3b8;
+  color: #111827;
 }
 
 .compact-pivot .movement-pivot th,
