@@ -7,19 +7,19 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-DOMESTIC = "#0F766E"
-FOREIGN = "#2563EB"
-POSITIVE = "#15803D"
-NEGATIVE = "#B91C1C"
-NAVY = "#172033"
+DOMESTIC = "#0F9F85"
+FOREIGN = "#0B63CE"
+POSITIVE = "#16866B"
+NEGATIVE = "#C2414B"
+NAVY = "#10243E"
 MUTED = "#64748B"
-GRID = "#E7EBF0"
+GRID = "#E6EDF5"
 
 CATEGORY_COLORS = [
-    "#334155", "#2563EB", "#0F766E", "#7C3AED", "#C2410C",
-    "#0891B2", "#BE123C", "#4D7C0F", "#6B7280", "#A16207",
-    "#0369A1", "#4338CA", "#047857", "#A21CAF", "#B45309",
-    "#0E7490", "#9F1239", "#3F6212", "#475569", "#854D0E",
+    "#D97706", "#0B63CE", "#0F9F85", "#7C3AED", "#D14D72",
+    "#0891B2", "#C2414B", "#65A30D", "#64748B", "#B7791F",
+    "#0369A1", "#4F46E5", "#047857", "#A21CAF", "#B45309",
+    "#0E7490", "#BE185D", "#4D7C0F", "#475569", "#92400E",
 ]
 
 
@@ -33,12 +33,12 @@ def _empty(message: str, height: int = 300) -> go.Figure:
 def _style(figure: go.Figure, height: int = 320, legend: bool = True) -> go.Figure:
     figure.update_layout(
         height=height,
-        margin={"l": 6, "r": 8, "t": 38, "b": 12},
+        margin={"l": 10, "r": 12, "t": 44, "b": 16},
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#FFFFFF",
         font={"family": "Inter, Segoe UI, sans-serif", "color": NAVY, "size": 10.5},
-        title={"x": 0.01, "xanchor": "left", "y": 0.985, "yanchor": "top", "font": {"size": 13}},
-        hoverlabel={"bgcolor": "#172033", "font_color": "white", "bordercolor": "#172033", "font_size": 11},
+        title={"x": 0.018, "xanchor": "left", "y": 0.975, "yanchor": "top", "font": {"size": 13, "color": "#071A2F"}},
+        hoverlabel={"bgcolor": "#10243E", "font_color": "white", "bordercolor": "#10243E", "font_size": 11},
         legend={
             "orientation": "h",
             "yanchor": "bottom",

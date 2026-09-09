@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 import pandas as pd
 import streamlit as st
+import streamlit_shadcn_ui as ui
 
 from charts import (
     movement_breakdown_chart,
@@ -32,6 +33,7 @@ from data_processing import (
     type_residency_history,
     type_stock_summary,
 )
+from utils import compact_number
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -272,6 +274,145 @@ def render_pivot(
     st.markdown(table_html, unsafe_allow_html=True)
 
 
+def selection_metrics(
+    data: pd.DataFrame,
+    analyze_by: str,
+    selected_entity: str,
+) -> dict[str, object]:
+    """Build presentation-only summary metrics from the active ownership slice."""
+    entity_column = "ticker" if analyze_by == "Stock" else "investor_name"
+    counterparty_column = "investor_name" if analyze_by == "Stock" else "ticker"
+    scoped = data[data[entity_column].eq(selected_entity)].dropna(subset=["date"]).copy()
+    if scoped.empty:
+        return {
+            "reported_shares": 0.0,
+            "delta": None,
+            "delta_pct": None,
+            "counterparties": 0,
+            "largest_stake": None,
+            "months": 0,
+            "latest_period": "No data",
+        }
+
+    dates = sorted(pd.Timestamp(value) for value in scoped["date"].unique())
+    latest = scoped[scoped["date"].eq(dates[-1])]
+    monthly_totals = scoped.groupby("date", observed=True)["ownership_units"].sum()
+    current_total = float(monthly_totals.loc[dates[-1]])
+    previous_total = float(monthly_totals.loc[dates[-2]]) if len(dates) > 1 else None
+    delta = current_total - previous_total if previous_total is not None else None
+    delta_pct = (
+        delta / abs(previous_total) * 100
+        if delta is not None and previous_total not in (None, 0)
+        else None
+    )
+    largest_stake = pd.to_numeric(latest["ownership_pct"], errors="coerce").max()
+    return {
+        "reported_shares": current_total,
+        "delta": delta,
+        "delta_pct": delta_pct,
+        "counterparties": int(latest[counterparty_column].nunique()),
+        "largest_stake": float(largest_stake) if pd.notna(largest_stake) else None,
+        "months": len(dates),
+        "latest_period": dates[-1].strftime("%b %Y"),
+    }
+
+
+def metric_delta_label(delta: object, delta_pct: object) -> str | None:
+    if delta is None or pd.isna(delta):
+        return None
+    numeric_delta = float(delta)
+    sign = "+" if numeric_delta > 0 else "−" if numeric_delta < 0 else ""
+    compact_delta = compact_number(abs(numeric_delta), decimals=1)
+    if delta_pct is None or pd.isna(delta_pct):
+        return f"{sign}{compact_delta}"
+    return f"{sign}{compact_delta} ({float(delta_pct):+.2f}%)"
+
+
+def render_metric_strip(metrics: dict[str, object], analyze_by: str, key_prefix: str) -> None:
+    counterparty_label = "Tracked holders" if analyze_by == "Stock" else "Tracked stocks"
+    largest_description = "Largest reported holder stake" if analyze_by == "Stock" else "Largest stock position"
+    cards = st.columns([1.35, 1, 1, 1, 1], gap="small")
+    with cards[0]:
+        ui.metric_card(
+            label="Reported shares",
+            value=compact_number(metrics["reported_shares"]),
+            description="Latest 1% ownership records",
+            delta=metric_delta_label(metrics["delta"], metrics["delta_pct"]),
+            key=f"{key_prefix}_reported_shares",
+        )
+    with cards[1]:
+        ui.metric_card(
+            label=counterparty_label,
+            value=f"{int(metrics['counterparties']):,}",
+            description="In the latest filing month",
+            delta="Current filing",
+            key=f"{key_prefix}_counterparties",
+        )
+    with cards[2]:
+        largest_value = metrics["largest_stake"]
+        ui.metric_card(
+            label="Largest stake",
+            value="—" if largest_value is None else f"{float(largest_value):.2f}%",
+            description=largest_description,
+            delta="Observed filing",
+            key=f"{key_prefix}_largest_stake",
+        )
+    with cards[3]:
+        ui.metric_card(
+            label="History depth",
+            value=f"{int(metrics['months'])} months",
+            description="Automatically discovered files",
+            delta="Monthly coverage",
+            key=f"{key_prefix}_history_depth",
+        )
+    with cards[4]:
+        ui.metric_card(
+            label="Latest period",
+            value=str(metrics["latest_period"]),
+            description="Most recent BEI observation",
+            delta="Auto-detected",
+            key=f"{key_prefix}_latest_period",
+        )
+
+
+def render_latest_snapshot(
+    history: pd.DataFrame,
+    row_label: str,
+    analyze_by: str,
+) -> None:
+    latest_date = pd.Timestamp(history["date"].max())
+    latest = history[history["date"].eq(latest_date)].nlargest(5, "ownership_units")
+    total = float(latest["ownership_units"].sum())
+    snapshot_label = row_label.lower() if row_label.lower().endswith("s") else f"{row_label.lower()}s"
+    rows: list[str] = []
+    for position, (_, row) in enumerate(latest.iterrows(), start=1):
+        label = str(row["series_label"])
+        label_html = escape(label)
+        if analyze_by == "Stock":
+            holder_query = escape(quote(label, safe=""), quote=True)
+            label_html = f'<a href="/?holder={holder_query}" target="_top">{label_html}</a>'
+        ownership_pct = row.get("ownership_pct")
+        percentage = "" if pd.isna(ownership_pct) else f"{float(ownership_pct):.2f}%"
+        rows.append(
+            '<div class="snapshot-row">'
+            f'<span class="snapshot-rank">{position}</span>'
+            f'<span class="snapshot-name" title="{escape(label, quote=True)}">{label_html}</span>'
+            '<span class="snapshot-value">'
+            f'<strong>{float(row["ownership_units"]):,.0f}</strong>'
+            f'<small>{percentage}</small></span></div>'
+        )
+    st.markdown(
+        '<div class="snapshot-card">'
+        '<div class="snapshot-card-header">'
+        f'<div><span class="panel-eyebrow">Latest snapshot</span><h3>Top {escape(snapshot_label)}</h3></div>'
+        f'<span class="period-chip">{latest_date:%b %Y}</span></div>'
+        f'<div class="snapshot-list">{"".join(rows)}</div>'
+        '<div class="snapshot-footer"><span>Top five reported shares</span>'
+        f'<strong>{total:,.0f}</strong></div></div>',
+        unsafe_allow_html=True,
+    )
+
+
 with st.spinner("Loading monthly ownership history…"):
     (
         ownership_data,
@@ -326,10 +467,15 @@ if holder_link_target:
 with st.sidebar:
     st.markdown(
         '<div class="sidebar-brand">'
-        '<span class="information-mark">i</span>'
-        '<div><div class="sidebar-title">KSEI Ownership Dashboard</div>'
-        '<div class="sidebar-subtitle">Historical ownership movement</div></div>'
-        "</div>",
+        '<div class="ksei-wordmark">KSEI</div>'
+        '<div class="ksei-market">Indonesia Capital Market</div>'
+        '<div class="sidebar-brand-rule"></div>'
+        '<div class="sidebar-title">Ownership Intelligence</div>'
+        '<div class="sidebar-subtitle">Institutional ownership analytics</div>'
+        '</div>'
+        '<div class="sidebar-nav-item active"><span class="nav-icon">◇</span>'
+        '<span>Ownership dashboard</span></div>'
+        '<div class="sidebar-section-label">Analysis</div>',
         unsafe_allow_html=True,
     )
     analyze_by = st.selectbox(
@@ -361,11 +507,18 @@ with st.sidebar:
             key="selected_owner",
         )
 
-    st.markdown('<div class="sidebar-rule"></div>', unsafe_allow_html=True)
-    st.caption(
-        f"Automatic history: {ownership_metadata.get('source_files', 0)} ownership · "
-        f"{classification_metadata.get('source_files', 0)} classification · "
-        f"{type_metadata.get('source_files', 0)} type files"
+    active_metrics = selection_metrics(ownership_data, analyze_by, selected_entity)
+    st.markdown(
+        '<div class="sidebar-rule"></div>'
+        '<div class="sidebar-section-label">Data coverage</div>'
+        '<div class="sidebar-source-grid">'
+        f'<span>Ownership files</span><strong>{ownership_metadata.get("source_files", 0)}</strong>'
+        f'<span>Classification files</span><strong>{classification_metadata.get("source_files", 0)}</strong>'
+        f'<span>Type files</span><strong>{type_metadata.get("source_files", 0)}</strong>'
+        f'<span>Latest period</span><strong>{escape(str(active_metrics["latest_period"]))}</strong>'
+        '</div>'
+        '<div class="sidebar-status"><span></span>BEI source folders connected</div>',
+        unsafe_allow_html=True,
     )
 
 
@@ -392,19 +545,26 @@ else:
         f"{available_dates['date'].min():%b-%y} to {available_dates['date'].max():%b-%y}"
     )
 
+identity_code = selected_entity if analyze_by == "Stock" else "OWNER"
+identity_name = stock_names.get(selected_entity, "") if analyze_by == "Stock" else selected_entity
 st.markdown(
-    '<div class="dashboard-header">'
-    '<div class="dashboard-heading-group">'
-    '<span class="information-mark main-mark">i</span>'
-    '<div><h1 class="dashboard-title">KSEI Ownership Dashboard</h1>'
-    '<div class="dashboard-subtitle">Ownership movement by stock or owner</div></div>'
-    "</div>"
-    f'<div class="selection-context"><div class="context-label">{analyze_by}</div>'
-    f'<div class="context-value">{context_name}</div>'
-    f'<div class="context-period">{coverage_label}</div></div>'
-    "</div>",
+    '<div class="institutional-header">'
+    '<div class="identity-block">'
+    '<div class="page-eyebrow">Ownership intelligence / monthly monitoring</div>'
+    '<div class="identity-line">'
+    f'<div class="identity-code">{escape(str(identity_code))}</div>'
+    f'<div class="identity-name">{escape(str(identity_name))}</div>'
+    '</div>'
+    '<div class="identity-subtitle">KSEI-reported ownership movement and composition</div>'
+    '</div>'
+    '<div class="coverage-panel">'
+    f'<span class="coverage-mode">{escape(analyze_by)} analysis</span>'
+    f'<strong>{escape(coverage_label)}</strong>'
+    '<small>BEI data folders update automatically</small>'
+    '</div></div>',
     unsafe_allow_html=True,
 )
+render_metric_strip(active_metrics, analyze_by, f"summary_{analyze_by}_{selected_entity}")
 
 
 ownership_tab, classification_tab, type_tab, monthly_change_tab = st.tabs(
@@ -427,16 +587,23 @@ with ownership_tab:
             f"{context_name} ownership movement",
             "Each line is a reported holder." if analyze_by == "Stock" else "Each line is a stock held by this owner.",
         )
-        st.plotly_chart(
-            ownership_movement_lines(
-                history,
-                f"{context_name} · Number of shares held",
-                ownership_dates,
-            ),
-            width="stretch",
-            config=PLOT_CONFIG,
-            key=f"ownership_lines_{analyze_by}_{selected_entity}",
+        ownership_chart_column, snapshot_column = st.columns(
+            [2.45, 1],
+            gap="medium",
         )
+        with ownership_chart_column:
+            st.plotly_chart(
+                ownership_movement_lines(
+                    history,
+                    "Ownership movement",
+                    ownership_dates,
+                ),
+                width="stretch",
+                config=PLOT_CONFIG,
+                key=f"ownership_lines_{analyze_by}_{selected_entity}",
+            )
+        with snapshot_column:
+            render_latest_snapshot(history, row_label, analyze_by)
 
         shares_pivot = historical_pivot(
             history,
