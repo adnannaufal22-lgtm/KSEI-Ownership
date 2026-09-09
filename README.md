@@ -1,30 +1,46 @@
 # KSEI Ownership Dashboard
 
-Interactive Streamlit dashboard for monthly Indonesian stock ownership data published by BEI/KSEI.
+A focused Streamlit dashboard for monthly Indonesian stock-ownership data published by BEI/KSEI.
 
 Live dashboard: https://ksei-ownership-dashboard.streamlit.app/
 
 ## Open the dashboard on this computer
 
-Double-click **Open Dashboard.bat**. The first launch installs the required packages once. Later launches open the dashboard directly.
+Double-click **Open Dashboard.bat**. The first launch creates the local environment and installs the required packages. Later launches open the dashboard directly; terminal commands are not required.
+
+## Dashboard structure
+
+Choose one global entity in the sidebar: either one Stock or one Owner. That selection drives exactly four tabs:
+
+1. **1% Ownership** — holder/stock history chart, number-of-shares pivot, and ownership-percentage pivot.
+2. **Classification** — dynamic investor-classification history and matching pivots.
+3. **Type** — scrip versus scripless history, Domestic versus Foreign history, and matching pivots.
+4. **Monthly Change** — period-over-period movement and a counterparty pivot.
+
+Classification and Type are stock-level source datasets, so those tabs explain that individual owner analysis is unavailable when Analyze By is set to Owner.
 
 ## Monthly update
 
-1. Download the new monthly 1% Ownership workbook from BEI.
-2. Put it in the BEI_Data folder. Keep one workbook per month and use a filename containing YYYY-MM, for example 2026-09_1% Ownership.xlsx.
-3. Double-click **Publish Monthly Update.bat**.
+Add each new BEI workbook to its matching folder:
 
-The update tool validates every monthly file, commits the changed BEI_Data folder to GitHub, and triggers the hosted Streamlit app to refresh.
+- `BEI_Data\1% Ownership`
+- `BEI_Data\Classification`
+- `BEI_Data\Type`
+
+Keep one workbook per month in each folder. A filename containing `YYYY-MM` is recommended, for example `2026-09_1% Ownership.xlsx`. The app uses the actual reporting date inside the workbook and uses the filename month only as a fallback where supported.
+
+After adding the files, double-click **Publish Monthly Update.bat**. It validates all three datasets, commits the changed `BEI_Data` folder to GitHub, and triggers the hosted Streamlit app to refresh.
 
 The dashboard automatically:
 
-- detects BEI disclaimer and header rows even when their position changes;
-- combines every monthly .xlsx or .xlsm file in BEI_Data;
-- rejects duplicate monthly files and filename/data-month mismatches;
-- supports both INVESTOR_TYPE and INVESTOR_CLASSIFICATION;
+- detects BEI header rows even when their position changes;
+- discovers future monthly `.xlsx` or `.xlsm` files in all three folders;
+- skips malformed or empty files in the running app while logging the issue;
+- blocks publication if a monthly source file cannot be validated;
 - consolidates high-confidence holder aliases using legal-name normalization and exact adjacent-month share continuity;
-- displays monthly holder/stock pivots with comma-separated share values;
-- provides clickable holder links into the holder movement view.
+- keeps missing monthly observations blank instead of turning them into zero;
+- formats displayed share values with comma separators;
+- provides clickable holder links that switch the global analysis to that owner.
 
 ## Manual start
 
@@ -33,8 +49,10 @@ The dashboard automatically:
 
 The local address is normally http://localhost:8501.
 
-## Data source
+## Source schema assumptions
 
-The app reads BEI_Data directly. It no longer depends on a separately prepared Summary Ownership.xlsx.
+- **1% Ownership:** reporting date, stock code, issuer name, owner name, total holding shares, and ownership percentage. Optional type, residency, nationality, domicile, scripless, and scrip columns are mapped when present.
+- **Classification:** one stock row per month, identity columns plus any number of classification share columns and `TOTAL SCRIPLESS`. Classification columns are detected dynamically.
+- **Type:** a three-row header containing `NUMBER OF SHARES`, Domestic/Foreign groups, investor-category and holding-band columns, and `TOTAL SCRIPLESS`.
 
-Expected core fields are configured in schema_mapping.json: reporting date, stock code, issuer name, holder name, investor classification, local/foreign status, total shares, and ownership percentage.
+Column aliases are maintained in `schema_mapping.json`. In Type data, `Scrip Shares = Number of Shares - Total Scripless`; Domestic plus Foreign must reconcile to Total Scripless.

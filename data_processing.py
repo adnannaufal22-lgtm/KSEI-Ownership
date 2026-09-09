@@ -593,5 +593,121 @@ def movement_pivot_table(breakdown: pd.DataFrame, metric: str, view: str) -> pd.
     latest_column = pivot.columns[-1]
     latest_values = pivot[latest_column].abs() if view != "Holding level" else pivot[latest_column]
     pivot = pivot.assign(_latest_sort=latest_values).sort_values("_latest_sort", ascending=False).drop(columns="_latest_sort")
-    pivot.columns = [pd.Timestamp(column).strftime("%b %Y") for column in pivot.columns]
+    pivot.columns = [pd.Timestamp(column).strftime("%b-%y") for column in pivot.columns]
     return pivot.reset_index()
+
+
+def selected_ownership_history(
+    data: pd.DataFrame,
+    analyze_by: str,
+    entity: str,
+) -> tuple[pd.DataFrame, str]:
+    """Return owner-level history for one globally selected stock or owner."""
+    if analyze_by not in {"Stock", "Owner"}:
+        raise ValueError("analyze_by must be 'Stock' or 'Owner'")
+    entity_column = "ticker" if analyze_by == "Stock" else "investor_name"
+    scoped = data[data[entity_column].eq(entity)].copy()
+    if scoped.empty:
+        return scoped, "Holder" if analyze_by == "Stock" else "Stock"
+
+    grouped = (
+        scoped.groupby(["date", "ticker", "security_name", "investor_name"], as_index=False, dropna=False)
+        .agg(
+            ownership_units=("ownership_units", "sum"),
+            ownership_pct=("ownership_pct", lambda values: values.sum(min_count=1)),
+        )
+        .sort_values(["date", "ownership_units"], ascending=[True, False])
+        .reset_index(drop=True)
+    )
+    grouped["holder_label"] = grouped["investor_name"].astype(str)
+    grouped["stock_label"] = (
+        grouped["ticker"].astype(str)
+        + " · "
+        + grouped["security_name"].fillna("").astype(str)
+    ).str.rstrip(" ·")
+    if analyze_by == "Stock":
+        grouped["series_label"] = grouped["holder_label"]
+        row_label = "Holder"
+    else:
+        grouped["series_label"] = grouped["stock_label"]
+        row_label = "Stock"
+    return grouped, row_label
+
+
+def historical_pivot(
+    data: pd.DataFrame,
+    row_column: str,
+    value_column: str,
+    all_dates: Iterable[pd.Timestamp] | None = None,
+) -> pd.DataFrame:
+    """Create a chronological historical pivot without filling missing observations."""
+    if data.empty:
+        return pd.DataFrame(columns=[row_column])
+    dates = (
+        sorted(pd.Timestamp(value) for value in all_dates)
+        if all_dates is not None
+        else sorted(pd.Timestamp(value) for value in data["date"].dropna().unique())
+    )
+    pivot = data.pivot_table(
+        index=row_column,
+        columns="date",
+        values=value_column,
+        aggfunc="sum",
+        dropna=False,
+    )
+    pivot = pivot.reindex(columns=dates)
+    if dates:
+        latest = pivot.iloc[:, -1]
+        pivot = pivot.assign(_latest_sort=latest).sort_values(
+            "_latest_sort",
+            ascending=False,
+            na_position="last",
+        ).drop(columns="_latest_sort")
+    pivot.columns = [pd.Timestamp(column).strftime("%b-%y") for column in pivot.columns]
+    return pivot.reset_index()
+
+
+def classification_stock_history(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    return (
+        data[data["ticker"].eq(ticker)]
+        .sort_values(["date", "classification"])
+        .reset_index(drop=True)
+    )
+
+
+def type_stock_summary(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    scoped = data[data["ticker"].eq(ticker)]
+    if scoped.empty:
+        return pd.DataFrame(
+            columns=["date", "number_of_shares", "total_scripless", "scrip_shares"]
+        )
+    return (
+        scoped.groupby("date", as_index=False)
+        .agg(
+            number_of_shares=("number_of_shares", "first"),
+            total_scripless=("total_scripless", "first"),
+            scrip_shares=("scrip_shares", "first"),
+        )
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+
+
+def type_residency_history(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    scoped = data[data["ticker"].eq(ticker)]
+    if scoped.empty:
+        return pd.DataFrame(
+            columns=["date", "domestic_foreign", "ownership_units", "ownership_pct"]
+        )
+    grouped = (
+        scoped.groupby(["date", "domestic_foreign"], as_index=False)
+        .agg(
+            ownership_units=("ownership_units", "sum"),
+            number_of_shares=("number_of_shares", "first"),
+        )
+        .sort_values(["date", "domestic_foreign"])
+        .reset_index(drop=True)
+    )
+    denominator = grouped["number_of_shares"].where(grouped["number_of_shares"].gt(0))
+    grouped["ownership_pct"] = grouped["ownership_units"] / denominator * 100
+    return grouped

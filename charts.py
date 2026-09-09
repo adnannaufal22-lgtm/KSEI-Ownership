@@ -18,6 +18,8 @@ GRID = "#E7EBF0"
 CATEGORY_COLORS = [
     "#334155", "#2563EB", "#0F766E", "#7C3AED", "#C2410C",
     "#0891B2", "#BE123C", "#4D7C0F", "#6B7280", "#A16207",
+    "#0369A1", "#4338CA", "#047857", "#A21CAF", "#B45309",
+    "#0E7490", "#9F1239", "#3F6212", "#475569", "#854D0E",
 ]
 
 
@@ -32,8 +34,8 @@ def _style(figure: go.Figure, height: int = 320, legend: bool = True) -> go.Figu
     figure.update_layout(
         height=height,
         margin={"l": 6, "r": 8, "t": 38, "b": 12},
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
         font={"family": "Inter, Segoe UI, sans-serif", "color": NAVY, "size": 10.5},
         title={"x": 0.01, "xanchor": "left", "y": 0.985, "yanchor": "top", "font": {"size": 13}},
         hoverlabel={"bgcolor": "#172033", "font_color": "white", "bordercolor": "#172033", "font_size": 11},
@@ -52,6 +54,19 @@ def _style(figure: go.Figure, height: int = 320, legend: bool = True) -> go.Figu
     )
     figure.update_xaxes(showgrid=False, zeroline=False, linecolor=GRID, tickfont={"color": MUTED, "size": 9.5}, automargin=True, title_font={"size": 10})
     figure.update_yaxes(gridcolor=GRID, zeroline=False, tickfont={"color": MUTED, "size": 9.5}, automargin=True, title_font={"size": 10})
+    return figure
+
+
+def _monthly_ticks(figure: go.Figure, values: pd.Series | list[pd.Timestamp]) -> go.Figure:
+    """Keep chart ticks aligned to actual source months without padded future labels."""
+    dates = sorted({pd.Timestamp(value) for value in values if pd.notna(value)})
+    if dates:
+        figure.update_xaxes(
+            tickmode="array",
+            tickvals=dates,
+            ticktext=[value.strftime("%b-%y") for value in dates],
+            tickangle=-35 if len(dates) > 6 else 0,
+        )
     return figure
 
 
@@ -262,7 +277,7 @@ def monthly_movement_chart(monthly: pd.DataFrame, title: str, metric: str) -> go
     figure.update_xaxes(title=None, tickformat="%b %Y")
     figure.update_yaxes(title_text=value_label, tickformat=number_format, secondary_y=False)
     figure.update_yaxes(title_text="Monthly change", tickformat=number_format, showgrid=False, secondary_y=True)
-    return _style(figure, height=345, legend=True)
+    return _monthly_ticks(_style(figure, height=345, legend=True), monthly["date"])
 
 
 def movement_breakdown_chart(breakdown: pd.DataFrame, counterparty_label: str, metric: str, limit: int = 8) -> go.Figure:
@@ -272,6 +287,12 @@ def movement_breakdown_chart(breakdown: pd.DataFrame, counterparty_label: str, m
     value_column = "ownership_units" if is_shares else "stake_points"
     leaders = breakdown.groupby("counterparty")[value_column].sum().nlargest(limit).index
     view = breakdown[breakdown["counterparty"].isin(leaders)].copy()
+    dates = sorted(pd.Timestamp(value) for value in breakdown["date"].dropna().unique())
+    grid = pd.MultiIndex.from_product(
+        [dates, sorted(view["counterparty"].unique())],
+        names=["date", "counterparty"],
+    ).to_frame(index=False)
+    view = grid.merge(view, on=["date", "counterparty"], how="left")
     figure = px.line(
         view,
         x="date",
@@ -282,6 +303,7 @@ def movement_breakdown_chart(breakdown: pd.DataFrame, counterparty_label: str, m
         custom_data=["change_units", "change_pct", "stake_points"],
     )
     figure.update_traces(
+        connectgaps=False,
         hovertemplate=(
             "%{fullData.name}<br>%{x|%d %b %Y}<br>"
             + ("Reported shares: %{y:,.0f}" if is_shares else "Stake points: %{y:,.2f}")
@@ -307,4 +329,199 @@ def movement_breakdown_chart(breakdown: pd.DataFrame, counterparty_label: str, m
             "borderwidth": 1,
         }
     )
-    return styled
+    return _monthly_ticks(styled, dates)
+
+
+def ownership_movement_lines(
+    data: pd.DataFrame,
+    title: str,
+    all_dates: list[pd.Timestamp] | None = None,
+) -> go.Figure:
+    """Plot owner-level histories with stable colors and explicit missing-month gaps."""
+    if data.empty:
+        return _empty("No ownership history is available.", 390)
+    series = sorted(data["series_label"].dropna().astype(str).unique())
+    dates = (
+        sorted(pd.Timestamp(value) for value in all_dates)
+        if all_dates is not None
+        else sorted(pd.Timestamp(value) for value in data["date"].dropna().unique())
+    )
+    grid = pd.MultiIndex.from_product(
+        [dates, series],
+        names=["date", "series_label"],
+    ).to_frame(index=False)
+    view = grid.merge(data, on=["date", "series_label"], how="left")
+    for column in ["holder_label", "stock_label"]:
+        labels = (
+            data[["series_label", column]]
+            .dropna()
+            .drop_duplicates("series_label")
+            .set_index("series_label")[column]
+            .to_dict()
+        )
+        view[column] = view[column].fillna(view["series_label"].map(labels))
+
+    color_map = {
+        label: CATEGORY_COLORS[index % len(CATEGORY_COLORS)]
+        for index, label in enumerate(series)
+    }
+    figure = px.line(
+        view,
+        x="date",
+        y="ownership_units",
+        color="series_label",
+        markers=True,
+        category_orders={"series_label": series},
+        color_discrete_map=color_map,
+        custom_data=["holder_label", "stock_label", "ownership_pct"],
+    )
+    figure.update_traces(
+        connectgaps=False,
+        line={"width": 2},
+        marker={"size": 4},
+        hovertemplate=(
+            "Date: %{x|%d %b %Y}"
+            "<br>Holder: %{customdata[0]}"
+            "<br>Stock: %{customdata[1]}"
+            "<br>Number of shares: %{y:,.0f}"
+            "<br>Ownership: %{customdata[2]:.2f}%<extra></extra>"
+        ),
+    )
+    figure.update_layout(title={"text": title, "font": {"size": 14}})
+    figure.update_xaxes(title=None, tickformat="%b-%y")
+    figure.update_yaxes(title="Number of shares", tickformat=",.0f")
+    styled = _style(figure, height=410, legend=True)
+    styled.update_layout(
+        legend={
+            "orientation": "v",
+            "x": 1.01,
+            "xanchor": "left",
+            "y": 1,
+            "yanchor": "top",
+            "font": {"size": 9},
+            "title": {"text": ""},
+        },
+        margin={"l": 6, "r": 220, "t": 42, "b": 12},
+    )
+    return _monthly_ticks(styled, dates)
+
+
+def stacked_area_line_chart(
+    data: pd.DataFrame,
+    category_column: str,
+    title: str,
+    y_title: str = "Number of shares",
+    all_dates: list[pd.Timestamp] | None = None,
+    color_map: dict[str, str] | None = None,
+) -> go.Figure:
+    """Plot a stacked area composition with line boundaries for each dynamic category."""
+    if data.empty:
+        return _empty("No ownership history is available.", 410)
+    active = (
+        data.groupby(category_column)["ownership_units"]
+        .apply(lambda values: values.abs().sum())
+    )
+    categories = sorted(active[active.gt(0)].index.astype(str))
+    if not categories:
+        return _empty("No non-zero ownership history is available.", 410)
+    dates = (
+        sorted(pd.Timestamp(value) for value in all_dates)
+        if all_dates is not None
+        else sorted(pd.Timestamp(value) for value in data["date"].dropna().unique())
+    )
+    view = data[data[category_column].astype(str).isin(categories)].copy()
+    grid = pd.MultiIndex.from_product(
+        [dates, categories],
+        names=["date", category_column],
+    ).to_frame(index=False)
+    view = grid.merge(view, on=["date", category_column], how="left")
+    palette = color_map or {
+        category: CATEGORY_COLORS[index % len(CATEGORY_COLORS)]
+        for index, category in enumerate(categories)
+    }
+
+    figure = go.Figure()
+    for category in categories:
+        category_data = view[view[category_column].astype(str).eq(category)]
+        figure.add_trace(
+            go.Scatter(
+                x=category_data["date"],
+                y=category_data["ownership_units"],
+                name=category,
+                mode="lines",
+                stackgroup="ownership",
+                connectgaps=False,
+                line={"width": 1.25, "color": palette.get(category)},
+                fillcolor=palette.get(category),
+                opacity=0.76,
+                customdata=category_data[["ownership_pct"]],
+                hovertemplate=(
+                    "Date: %{x|%d %b %Y}"
+                    f"<br>{category}"
+                    "<br>Number of shares: %{y:,.0f}"
+                    "<br>Ownership: %{customdata[0]:.2f}%<extra></extra>"
+                ),
+            )
+        )
+    figure.update_layout(title={"text": title, "font": {"size": 14}})
+    figure.update_xaxes(title=None, tickformat="%b-%y")
+    figure.update_yaxes(title=y_title, tickformat=",.0f")
+    styled = _style(figure, height=430, legend=True)
+    styled.update_layout(
+        legend={
+            "orientation": "v",
+            "x": 1.01,
+            "xanchor": "left",
+            "y": 1,
+            "yanchor": "top",
+            "font": {"size": 8.5},
+            "title": {"text": ""},
+        },
+        margin={"l": 6, "r": 245, "t": 42, "b": 12},
+    )
+    return _monthly_ticks(styled, dates)
+
+
+def scrip_vs_scripless_chart(data: pd.DataFrame, title: str) -> go.Figure:
+    if data.empty:
+        return _empty("No scrip or scripless history is available.", 350)
+    view = data.melt(
+        id_vars=["date", "number_of_shares"],
+        value_vars=["total_scripless", "scrip_shares"],
+        var_name="share_type",
+        value_name="ownership_units",
+    )
+    view["share_type"] = view["share_type"].map(
+        {"total_scripless": "Scripless shares", "scrip_shares": "Scrip shares"}
+    )
+    denominator = view["number_of_shares"].where(view["number_of_shares"].gt(0))
+    view["ownership_pct"] = view["ownership_units"] / denominator * 100
+    order = ["Scripless shares", "Scrip shares"]
+    colors = {"Scripless shares": "#2563EB", "Scrip shares": "#94A3B8"}
+
+    figure = go.Figure()
+    for label in order:
+        series = view[view["share_type"].eq(label)]
+        figure.add_trace(
+            go.Scatter(
+                x=series["date"],
+                y=series["ownership_units"],
+                name=label,
+                mode="lines",
+                stackgroup="share_form",
+                connectgaps=False,
+                line={"width": 1.8, "color": colors[label]},
+                fillcolor=colors[label],
+                opacity=0.78,
+                customdata=series[["ownership_pct"]],
+                hovertemplate=(
+                    "Date: %{x|%d %b %Y}"
+                    f"<br>{label}: %{{y:,.0f}}"
+                    "<br>Percentage of total shares: %{customdata[0]:.2f}%<extra></extra>"
+                ),
+            )
+        )
+    figure.update_layout(title={"text": title, "font": {"size": 14}})
+    figure.update_xaxes(title=None, tickformat="%b-%y")
+    figure.update_yaxes(title="Number of shares", tickformat=",.0f")
+    return _monthly_ticks(_style(figure, height=350, legend=True), data["date"])

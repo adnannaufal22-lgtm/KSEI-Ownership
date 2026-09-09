@@ -13,6 +13,8 @@
     "ownership_scrip": ["HOLDINGS_SCRIP", "SCRIP_HOLDINGS"],
     "ownership_units": ["TOTAL_HOLDING_SHARES", "TOTAL_HOLDINGS", "HOLDINGS", "OWNERSHIP_UNITS", "SHARES"],
     "ownership_pct": ["PERCENTAGE", "OWNERSHIP_PCT", "OWNERSHIP_PERCENTAGE", "PCT", "SHARE_PCT"],
+    "number_of_shares": ["NUMBER_OF_SHARES", "TOTAL_SHARES", "SHARES_OUTSTANDING", "ISSUED_SHARES"],
+    "total_scripless": ["TOTAL_SCRIPLESS", "TOTAL SCRIPLESS", "SCRIPLESS_TOTAL"],
     "investor_count": ["INVESTOR_COUNT", "NUMBER_OF_INVESTORS", "INVESTORS"],
     "sector": ["SECTOR", "INDUSTRY", "BUSINESS_SECTOR"]
   },
