@@ -4,6 +4,7 @@ import pandas as pd
 
 from monthly_changes import (
     build_monthly_change_detail,
+    filter_market_overview,
     owner_change_summary,
     stock_change_summary,
 )
@@ -55,6 +56,20 @@ class MonthlyChangeTests(unittest.TestCase):
         self.assertEqual(owner_a["stocks_decreased"], 1)
         self.assertEqual(owner_a["stocks_changed"], 2)
         self.assertEqual(owner_a["absolute_change"], 45)
+
+    def test_overview_defaults_to_all_tickers_and_filters_optionally(self) -> None:
+        detail = build_monthly_change_detail(self.data)
+        market = filter_market_overview(detail)
+        self.assertEqual(set(market["stock"]), {"AAA", "BBB"})
+
+        filtered = filter_market_overview(
+            detail,
+            tickers=["BBB"],
+            owners=["Owner A"],
+            minimum_absolute_change=10,
+        )
+        self.assertEqual(set(filtered["stock"]), {"BBB"})
+        self.assertEqual(set(filtered["owner"]), {"Owner A"})
 
 
 if __name__ == "__main__":

@@ -448,6 +448,41 @@ div[data-baseweb="select"] > div:focus-within {
   padding-top: .9rem;
 }
 
+[data-testid="stRadio"] [role="radiogroup"] {
+  display: flex;
+  flex-wrap: wrap;
+  width: 100%;
+  gap: 0;
+  min-height: 40px;
+  padding: 0 .38rem;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0;
+  background: var(--panel-2);
+}
+
+[data-testid="stRadio"] [role="radiogroup"] > label {
+  min-height: 39px;
+  margin: 0;
+  padding: 0 .92rem;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: .66rem;
+  font-weight: 650;
+  letter-spacing: .035em;
+  text-transform: uppercase;
+}
+
+[data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) {
+  border-bottom-color: var(--amber);
+  color: var(--amber);
+}
+
+[data-testid="stRadio"] [data-testid="stRadioOption"] > div > div > div:first-child {
+  display: none;
+}
+
 .section-kicker {
   margin-top: .2rem;
 }

@@ -1082,3 +1082,104 @@ def build_account_position_pivots(
     movement.index.name = "Date"
     movement.columns.name = None
     return position, movement
+
+
+def build_account_hierarchy_pivots(
+    accounts: pd.DataFrame,
+    ticker: str,
+    dimension: str = "institution",
+    owners: list[str] | tuple[str, ...] | set[str] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return all-owner account positions and daily changes for one ticker.
+
+    Rows are report dates. Columns are a two-level hierarchy whose first level
+    is the beneficial owner and whose second level is either the securities
+    institution or account name. Values are always account-level ``shares``
+    (normalized ``Jumlah Saham``), never combined investor ownership.
+    """
+    if dimension not in {"institution", "account"}:
+        raise ValueError("Account dimension must be 'institution' or 'account'.")
+    if accounts.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    scoped = accounts[accounts["ticker"].astype(str).eq(str(ticker))].copy()
+    if owners:
+        owner_set = {str(value) for value in owners}
+        scoped = scoped[scoped["owner_normalized"].astype(str).isin(owner_set)]
+    if scoped.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
+    scoped["shares"] = pd.to_numeric(scoped["shares"], errors="coerce")
+    scoped = scoped.dropna(subset=["date", "shares"])
+    if scoped.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    # Adjacent KSEI workbooks can repeat a complete prior-day snapshot. Select
+    # the workbook closest to each displayed date independently for every owner.
+    if "source_date" in scoped:
+        source_dates = pd.to_datetime(scoped["source_date"], errors="coerce")
+        source_distance = (source_dates - scoped["date"]).abs()
+        nearest_distance = source_distance.groupby(
+            [scoped["date"], scoped["owner_normalized"]]
+        ).transform("min")
+        scoped = scoped[
+            source_distance.isna()
+            | nearest_distance.isna()
+            | source_distance.eq(nearest_distance)
+        ].copy()
+
+    owner_display = scoped["owner"].fillna(scoped["owner_normalized"]).astype(str)
+    if dimension == "institution":
+        account_display = scoped["account_holder"].fillna(
+            "(MISSING ACCOUNT HOLDER)"
+        ).astype(str)
+        second_level = "Institution"
+    else:
+        account_display = scoped["account_name"].fillna(
+            "(MISSING ACCOUNT NAME)"
+        ).astype(str)
+        second_level = "Account Name"
+    scoped = scoped.assign(
+        owner_display=owner_display,
+        account_display=account_display,
+    )
+
+    grouped = (
+        scoped.groupby(
+            ["date", "owner_display", "account_display"],
+            observed=True,
+            as_index=False,
+        )["shares"]
+        .sum(min_count=1)
+    )
+    position = grouped.pivot_table(
+        index="date",
+        columns=["owner_display", "account_display"],
+        values="shares",
+        aggfunc="sum",
+        fill_value=0.0,
+    ).sort_index()
+    position.index = pd.DatetimeIndex(position.index, name="Date")
+    position.columns = pd.MultiIndex.from_tuples(
+        position.columns,
+        names=["Beneficial Owner", second_level],
+    )
+
+    if not position.empty:
+        latest_values = position.iloc[-1]
+        owner_totals = latest_values.groupby(level=0).sum().sort_values(
+            ascending=False, kind="stable"
+        )
+        ordered_columns: list[tuple[str, str]] = []
+        for owner in owner_totals.index:
+            owner_values = latest_values.xs(owner, level=0).sort_values(
+                ascending=False, kind="stable"
+            )
+            ordered_columns.extend((owner, account) for account in owner_values.index)
+        position = position.loc[:, ordered_columns]
+
+    movement = position.diff()
+    movement.index.name = "Date"
+    movement.columns.names = position.columns.names
+    return position, movement

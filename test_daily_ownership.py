@@ -8,6 +8,7 @@ from daily_ownership import (
     SIGNAL_NO_LONGER_REPORTED,
     SIGNAL_SELLING,
     SIGNAL_UNCHANGED,
+    build_account_hierarchy_pivots,
     build_account_position_pivots,
     classify_owner_movement,
     load_daily_ownership_files,
@@ -194,3 +195,52 @@ def test_account_position_pivot_uses_account_shares_and_daily_diff() -> None:
     assert movement.loc[pd.Timestamp("2026-09-29"), "PT MNC SEKURITAS"] == -81_327_500
     assert movement.loc[pd.Timestamp("2026-09-29"), "PT KIWOOM SEKURITAS INDONESIA"] == 81_327_500
     assert movement.iloc[0].isna().all()
+
+
+def test_account_hierarchy_pivot_shows_multiple_owners_and_two_levels() -> None:
+    accounts = pd.DataFrame(
+        [
+            ("2026-09-28", "2026-09-28", "OASA", "OWNER A", "Owner A", "Broker X", "Acct A", 100),
+            ("2026-09-29", "2026-09-29", "OASA", "OWNER A", "Owner A", "Broker X", "Acct A", 130),
+            ("2026-09-28", "2026-09-28", "OASA", "OWNER B", "Owner B", "Broker Y", "Acct B", 70),
+            ("2026-09-29", "2026-09-29", "OASA", "OWNER B", "Owner B", "Broker Y", "Acct B", 50),
+        ],
+        columns=[
+            "date", "source_date", "ticker", "owner_normalized", "owner",
+            "account_holder", "account_name", "shares",
+        ],
+    )
+
+    position, movement = build_account_hierarchy_pivots(
+        accounts, "OASA", "institution"
+    )
+
+    assert isinstance(position.columns, pd.MultiIndex)
+    assert position.columns.names == ["Beneficial Owner", "Institution"]
+    assert set(position.columns.get_level_values(0)) == {"Owner A", "Owner B"}
+    assert position.loc[pd.Timestamp("2026-09-29"), ("Owner A", "Broker X")] == 130
+    assert movement.loc[pd.Timestamp("2026-09-29"), ("Owner A", "Broker X")] == 30
+    assert movement.loc[pd.Timestamp("2026-09-29"), ("Owner B", "Broker Y")] == -20
+
+
+def test_account_hierarchy_account_name_mode_and_optional_owner_filter() -> None:
+    accounts = pd.DataFrame(
+        [
+            ("2026-09-28", "2026-09-28", "OASA", "OWNER A", "Owner A", "Broker X", "Primary", 100),
+            ("2026-09-29", "2026-09-29", "OASA", "OWNER A", "Owner A", "Broker X", "Primary", 125),
+            ("2026-09-28", "2026-09-28", "OASA", "OWNER B", "Owner B", "Broker Y", "Secondary", 70),
+            ("2026-09-29", "2026-09-29", "OASA", "OWNER B", "Owner B", "Broker Y", "Secondary", 75),
+        ],
+        columns=[
+            "date", "source_date", "ticker", "owner_normalized", "owner",
+            "account_holder", "account_name", "shares",
+        ],
+    )
+
+    position, movement = build_account_hierarchy_pivots(
+        accounts, "OASA", "account", owners=["OWNER A"]
+    )
+
+    assert position.columns.names == ["Beneficial Owner", "Account Name"]
+    assert list(position.columns) == [("Owner A", "Primary")]
+    assert movement.iloc[-1, 0] == 25

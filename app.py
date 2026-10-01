@@ -24,7 +24,7 @@ from daily_ownership import (
     SIGNAL_INTERNAL_TRANSFER,
     SIGNAL_SELLING,
     SIGNAL_UNCHANGED,
-    build_account_position_pivots,
+    build_account_hierarchy_pivots,
     load_daily_ownership_folder,
     normalize_identity,
 )
@@ -46,6 +46,7 @@ from data_processing import (
 )
 from monthly_changes import (
     build_monthly_change_detail,
+    filter_market_overview,
     owner_change_summary,
     stock_change_summary,
 )
@@ -628,29 +629,37 @@ def render_account_pivot(
     view = pivot.copy()
     view.index = pd.DatetimeIndex(view.index).strftime("%d-%b-%y").str.upper()
     view.index.name = "Date"
-    view = view.reset_index()
-    value_columns = [column for column in view.columns if column != "Date"]
     formatter = (
         signed_shares
         if movement
         else lambda value: "—" if pd.isna(value) else f"{float(value):,.0f}"
     )
-    styled = view.style.format(
-        {column: formatter for column in value_columns},
-        na_rep="—",
-    )
-    styled = styled.set_properties(
-        subset=["Date"],
-        **{"color": "#F1F5F9", "font-weight": "650"},
-    )
+    styled = view.style.format(formatter, na_rep="—")
     if movement:
-        styled = styled.map(movement_cell_style, subset=value_columns)
+        styled = styled.map(movement_cell_style)
+    styled = styled.set_table_styles(
+        [
+            {
+                "selector": "th.col_heading.level0",
+                "props": "color:#F5A623;font-weight:750;border-bottom:1px solid #25303B;",
+            },
+            {
+                "selector": "th.col_heading.level1",
+                "props": "color:#8998A8;font-weight:650;",
+            },
+            {
+                "selector": "th.row_heading",
+                "props": "color:#F1F5F9;font-weight:650;",
+            },
+        ],
+        overwrite=False,
+    )
     height = min(max_height, 39 + 35 * len(view))
     st.dataframe(
         styled,
         width="stretch",
         height=height,
-        hide_index=True,
+        hide_index=False,
         row_height=34,
         key=key,
     )
@@ -957,6 +966,7 @@ holder_link_target = st.query_params.get("holder")
 if holder_link_target:
     holder_link_target = str(holder_link_target)
     if holder_link_target in owner_options:
+        st.session_state["top_navigation"] = "Entity Movement"
         st.session_state["analysis_mode"] = "Owner"
         st.session_state["selected_owner"] = holder_link_target
     st.query_params.clear()
@@ -970,99 +980,124 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-selector_mode_column, selector_entity_column = st.columns([1, 4], gap="medium")
-with selector_mode_column:
-    analyze_by = st.selectbox(
-        "Analyze By",
-        ["Stock", "Owner"],
-        key="analysis_mode",
+top_navigation = [
+    "Overview",
+    "1% Ownership",
+    "5% Ownership",
+    "Classification",
+    "Type",
+    "Entity Movement",
+]
+if st.session_state.get("top_navigation") not in top_navigation:
+    st.session_state["top_navigation"] = "Overview"
+active_page = st.radio(
+    "Primary navigation",
+    top_navigation,
+    horizontal=True,
+    label_visibility="collapsed",
+    key="top_navigation",
+)
+
+overview_section = ""
+if active_page == "Overview":
+    market_dates = [
+        pd.Timestamp(value)
+        for frame in (ownership_data, daily_owner_data)
+        if not frame.empty and "date" in frame
+        for value in frame["date"].dropna().unique()
+    ]
+    market_latest = max(market_dates).strftime("%d-%b-%y").upper() if market_dates else "—"
+    render_dashboard_masthead(
+        "Market",
+        "Overview",
+        ownership_metadata,
+        classification_metadata,
+        type_metadata,
+        daily_metadata,
+        market_latest,
+    )
+    overview_section = st.radio(
+        "Overview dataset",
+        ["1% Monthly Changes", "5% Daily Movement"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="overview_navigation",
+    )
+else:
+    analyze_by = "Stock"
+    if active_page == "Entity Movement":
+        selector_mode_column, selector_entity_column = st.columns([1, 4], gap="medium")
+        with selector_mode_column:
+            analyze_by = st.selectbox(
+                "Analyze By", ["Stock", "Owner"], key="analysis_mode"
+            )
+    else:
+        selector_entity_column = st.container()
+
+    with selector_entity_column:
+        if analyze_by == "Owner":
+            if not owner_options:
+                st.error("No individual owners were found in the ownership data.")
+                st.stop()
+            if st.session_state.get("selected_owner") not in owner_options:
+                st.session_state["selected_owner"] = owner_options[0]
+            selected_entity = st.selectbox("Owner", owner_options, key="selected_owner")
+        else:
+            page_stocks = {
+                "1% Ownership": sorted(ownership_data["ticker"].dropna().astype(str).unique()),
+                "5% Ownership": sorted(daily_owner_data["ticker"].dropna().astype(str).unique()),
+                "Classification": sorted(classification_data["ticker"].dropna().astype(str).unique()),
+                "Type": sorted(type_data["ticker"].dropna().astype(str).unique()),
+            }.get(active_page, stock_options)
+            if not page_stocks:
+                st.error(f"No stock codes are available for {active_page}.")
+                st.stop()
+            if st.session_state.get("selected_stock") not in page_stocks:
+                st.session_state["selected_stock"] = "AADI" if "AADI" in page_stocks else page_stocks[0]
+            selected_entity = st.selectbox(
+                "Stock",
+                page_stocks,
+                key="selected_stock",
+                format_func=lambda ticker: f"{ticker} · {stock_names.get(ticker, '')}".rstrip(" ·"),
+            )
+
+    active_metrics = selection_metrics(ownership_data, analyze_by, selected_entity)
+    render_dashboard_masthead(
+        analyze_by,
+        selected_entity,
+        ownership_metadata,
+        classification_metadata,
+        type_metadata,
+        daily_metadata,
+        active_metrics["latest_period"],
     )
 
-with selector_entity_column:
     if analyze_by == "Stock":
-        if not stock_options:
-            st.error("No stock codes were found in the ownership folders.")
-            st.stop()
-        if st.session_state.get("selected_stock") not in stock_options:
-            st.session_state["selected_stock"] = "AADI" if "AADI" in stock_options else stock_options[0]
-        selected_entity = st.selectbox(
-            "Stock",
-            stock_options,
-            key="selected_stock",
-            format_func=lambda ticker: f"{ticker} · {stock_names.get(ticker, '')}".rstrip(" ·"),
+        context_name = f"{selected_entity} · {stock_names.get(selected_entity, '')}".rstrip(" ·")
+        available_dates = pd.concat(
+            [
+                frame.loc[frame["ticker"].eq(selected_entity), ["date"]]
+                for frame in (ownership_data, classification_data, type_data)
+                if not frame.empty and "ticker" in frame and "date" in frame
+            ],
+            ignore_index=True,
         )
     else:
-        if not owner_options:
-            st.error("No individual owners were found in the 1% Ownership data.")
-            st.stop()
-        if st.session_state.get("selected_owner") not in owner_options:
-            st.session_state["selected_owner"] = owner_options[0]
-        selected_entity = st.selectbox(
-            "Owner",
-            owner_options,
-            key="selected_owner",
-        )
-
-active_metrics = selection_metrics(ownership_data, analyze_by, selected_entity)
-render_dashboard_masthead(
-    analyze_by,
-    selected_entity,
-    ownership_metadata,
-    classification_metadata,
-    type_metadata,
-    daily_metadata,
-    active_metrics["latest_period"],
-)
-
-
-if analyze_by == "Stock":
-    context_name = f"{selected_entity} · {stock_names.get(selected_entity, '')}".rstrip(" ·")
-    available_dates = pd.concat(
-        [
-            frame.loc[frame["ticker"].eq(selected_entity), ["date"]]
-            for frame in (ownership_data, classification_data, type_data)
-            if not frame.empty and "ticker" in frame and "date" in frame
-        ],
-        ignore_index=True,
-    )
-else:
-    context_name = selected_entity
-    available_dates = ownership_data.loc[
-        ownership_data["investor_name"].eq(selected_entity),
-        ["date"],
-    ]
-if available_dates.empty:
-    coverage_label = "No history available"
-else:
+        context_name = selected_entity
+        available_dates = ownership_data.loc[
+            ownership_data["investor_name"].eq(selected_entity), ["date"]
+        ]
     coverage_label = (
-        f"{available_dates['date'].min():%b-%y} to {available_dates['date'].max():%b-%y}"
+        "No history available"
+        if available_dates.empty
+        else f"{available_dates['date'].min():%b-%y} to {available_dates['date'].max():%b-%y}"
     )
-
-identity_code = selected_entity if analyze_by == "Stock" else "OWNER"
-identity_name = stock_names.get(selected_entity, "") if analyze_by == "Stock" else selected_entity
-render_terminal_header(identity_code, identity_name, analyze_by, active_metrics)
-
-
-(
-    ownership_tab,
-    daily_ownership_tab,
-    classification_tab,
-    type_tab,
-    entity_movement_tab,
-    monthly_changes_tab,
-) = st.tabs(
-    [
-        "1% Ownership",
-        "5% Ownership",
-        "Classification",
-        "Type",
-        "Entity Movement",
-        "Monthly Changes",
-    ]
-)
+    identity_code = selected_entity if analyze_by == "Stock" else "OWNER"
+    identity_name = stock_names.get(selected_entity, "") if analyze_by == "Stock" else selected_entity
+    render_terminal_header(identity_code, identity_name, analyze_by, active_metrics)
 
 
-with ownership_tab:
+if active_page == "1% Ownership":
     history, row_label = selected_ownership_history(
         ownership_data,
         analyze_by,
@@ -1145,18 +1180,17 @@ with ownership_tab:
         st.caption("Blank cells represent missing observations, not zero ownership.")
 
 
-with daily_ownership_tab:
+if active_page == "5% Ownership":
     section(
         "5% Ownership · Daily KSEI",
         f"{selected_entity} · beneficial-owner and securities-account monitoring",
         "WHO changed ownership is measured from combined beneficial ownership; WHERE shares moved is shown separately by securities account.",
     )
-    owner_subtab, position_subtab, account_movement_subtab, daily_market_subtab = st.tabs(
+    owner_subtab, position_subtab, account_movement_subtab = st.tabs(
         [
             "Beneficial Owner",
             "Latest Account Position",
             "Account Movement",
-            "Daily >5% Movement",
         ]
     )
     if daily_owner_data.empty or daily_movements.empty:
@@ -1449,61 +1483,49 @@ with daily_ownership_tab:
                     .set_index("owner_normalized")["owner"]
                     .to_dict()
                 )
-                if scoped_owner_normalized:
-                    account_owner_labels = {
-                        key: value
-                        for key, value in account_owner_labels.items()
-                        if key == scoped_owner_normalized
-                    }
                 account_owner_keys = list(account_owner_labels)
                 if not account_owner_keys:
                     st.info("No account-level history is available for this selection.")
                 else:
-                    preferred_account_owner = st.session_state.get(
-                        f"daily_selected_owner_{daily_ticker}"
-                    )
-                    if preferred_account_owner not in account_owner_keys:
-                        preferred_account_owner = account_owner_keys[0]
                     account_dates = sorted(
                         pd.Timestamp(value) for value in account_scope["date"].dropna().unique()
                     )
-                    movement_owner_control, movement_range_control, dimension_control = st.columns(
-                        [2.1, 1.7, 1.7], gap="small"
+                    movement_range_control, dimension_control, movement_owner_control = st.columns(
+                        [1.55, 1.25, 2.7], gap="small"
                     )
-                    with movement_owner_control:
-                        account_owner = st.selectbox(
-                            "Beneficial Owner",
-                            account_owner_keys,
-                            index=account_owner_keys.index(preferred_account_owner),
-                            format_func=lambda value: account_owner_labels[value],
-                            key=f"account_owner_{daily_ticker}",
-                            help="Select whose securities-account positions are pivoted through time.",
-                        )
                     with movement_range_control:
                         account_date_range = st.date_input(
                             "Date Range",
                             value=(account_dates[0].date(), account_dates[-1].date()),
                             min_value=account_dates[0].date(),
                             max_value=account_dates[-1].date(),
-                            key=f"account_movement_range_{daily_ticker}_{account_owner}",
+                            key=f"account_movement_range_{daily_ticker}",
                         )
                     dimension_options = {
-                        "Institution + Account Name": "institution_account",
-                        "Institution only": "institution",
-                        "Account Name only": "account",
+                        "Institution": "institution",
+                        "Account Name": "account",
                     }
                     with dimension_control:
                         dimension_label = st.selectbox(
                             "Account Dimension",
                             list(dimension_options),
-                            key=f"account_dimension_{daily_ticker}_{account_owner}",
+                            key=f"account_dimension_{daily_ticker}",
+                        )
+                    with movement_owner_control:
+                        selected_account_owners = st.multiselect(
+                            "Owner Filter",
+                            account_owner_keys,
+                            format_func=lambda value: account_owner_labels[value],
+                            placeholder="All beneficial owners",
+                            key=f"account_owner_filter_{daily_ticker}",
+                            help="Leave empty to show every beneficial owner for the selected ticker.",
                         )
 
-                    position_pivot, movement_pivot = build_account_position_pivots(
+                    position_pivot, movement_pivot = build_account_hierarchy_pivots(
                         daily_account_data,
                         daily_ticker,
-                        account_owner,
                         dimension_options[dimension_label],
+                        selected_account_owners or None,
                     )
                     if isinstance(account_date_range, (tuple, list)) and len(account_date_range) == 2:
                         range_start, range_end = map(pd.Timestamp, account_date_range)
@@ -1528,13 +1550,16 @@ with daily_ownership_tab:
 
                     st.markdown(
                         '<div class="account-definition"><b>ACCOUNT MOVEMENT = WHERE SHARES MOVED</b>'
-                        '<span>Built from account-level Jumlah Saham. An account increase or decrease does not by itself mean the beneficial owner accumulated or sold.</span></div>',
+                        '<span>All beneficial owners are shown together. Built from account-level Jumlah Saham; an account increase or decrease does not by itself mean the owner accumulated or sold.</span></div>',
                         unsafe_allow_html=True,
                     )
-                    table_heading("Account Position · Date × Account → Shares Held", separated=True)
+                    table_heading(
+                        f"Account Position · Date × Beneficial Owner × {dimension_label}",
+                        separated=True,
+                    )
                     render_account_pivot(
                         position_view,
-                        f"account_position_pivot_{daily_ticker}_{account_owner}_{dimension_label}_{range_start:%Y%m%d}_{range_end:%Y%m%d}",
+                        f"account_position_pivot_{daily_ticker}_{dimension_label}_{len(selected_account_owners)}_{range_start:%Y%m%d}_{range_end:%Y%m%d}",
                     )
                     table_heading(
                         "Account Daily Change · Current Position − Previous Position",
@@ -1545,25 +1570,9 @@ with daily_ownership_tab:
                     )
                     render_account_pivot(
                         movement_view,
-                        f"account_change_pivot_{daily_ticker}_{account_owner}_{dimension_label}_{range_start:%Y%m%d}_{range_end:%Y%m%d}",
+                        f"account_change_pivot_{daily_ticker}_{dimension_label}_{len(selected_account_owners)}_{range_start:%Y%m%d}_{range_end:%Y%m%d}",
                         movement=True,
                     )
-
-                    owner_movements_in_range = ticker_movements[
-                        ticker_movements["owner_normalized"].eq(account_owner)
-                        & ticker_movements["date"].between(range_start, range_end)
-                    ].sort_values("date")
-                    if not owner_movements_in_range.empty:
-                        latest_owner_movement = owner_movements_in_range.iloc[-1]
-                        latest_account_changes = daily_account_movements[
-                            daily_account_movements["ticker"].eq(daily_ticker)
-                            & daily_account_movements["owner_normalized"].eq(account_owner)
-                            & daily_account_movements["date"].eq(latest_owner_movement["date"])
-                        ]
-                        render_account_interpretation(
-                            latest_owner_movement,
-                            latest_account_changes,
-                        )
 
             if not daily_quality.empty:
                 with st.expander(
@@ -1573,7 +1582,7 @@ with daily_ownership_tab:
                     st.dataframe(daily_quality, width="stretch", hide_index=True)
 
 
-with classification_tab:
+if active_page == "Classification":
     if analyze_by == "Owner":
         st.info(
             "This dataset is aggregated by stock and investor classification and does not contain individual owner-level information."
@@ -1654,7 +1663,7 @@ with classification_tab:
                 st.caption("Percentages use Total Scripless from the Classification source as the denominator.")
 
 
-with type_tab:
+if active_page == "Type":
     if analyze_by == "Owner":
         st.info(
             "This dataset is aggregated by stock, residency, investor type, and holding band and does not contain individual owner-level information."
@@ -1782,7 +1791,7 @@ with type_tab:
             st.caption("Domestic and Foreign reconcile to Total Scripless; percentages use Number of Shares as the denominator.")
 
 
-with entity_movement_tab:
+if active_page == "Entity Movement":
     entity_column = "ticker" if analyze_by == "Stock" else "investor_name"
     monthly, breakdown, counterparty_label = entity_monthly_movement(
         ownership_data,
@@ -1824,7 +1833,7 @@ with entity_movement_tab:
         )
 
 
-with monthly_changes_tab:
+if active_page == "Overview" and overview_section == "1% Monthly Changes":
     comparison_dates = sorted(
         pd.Timestamp(value) for value in ownership_data["date"].dropna().unique()
     )
@@ -1852,23 +1861,52 @@ with monthly_changes_tab:
             value for value in comparison_dates if value < selected_change_month
         )
         with st.spinner("Preparing market-wide ownership changes…"):
-            change_detail, stock_changes, owner_changes = monthly_change_analysis(
+            change_detail, _, _ = monthly_change_analysis(
                 ownership_data
             )
         period_detail = change_detail[
             change_detail["date"].eq(selected_change_month)
             & change_detail["is_changed"]
         ].copy()
-        period_stocks = (
-            stock_changes[stock_changes["date"].eq(selected_change_month)]
-            .sort_values(["absolute_change", "stock"], ascending=[False, True])
-            .reset_index(drop=True)
+        overview_filters = st.columns([1.5, 2.2, 2.2, 1.35], gap="small")
+        with overview_filters[0]:
+            st.text_input(
+                "Market Scope",
+                value="ALL IDX TICKERS",
+                disabled=True,
+                key=f"overview_scope_{selected_change_month:%Y%m}",
+            )
+        with overview_filters[1]:
+            overview_tickers = st.multiselect(
+                "Ticker Filter",
+                sorted(period_detail["stock"].dropna().astype(str).unique()),
+                placeholder="All tickers",
+                key=f"overview_tickers_{selected_change_month:%Y%m}",
+            )
+        with overview_filters[2]:
+            overview_owners = st.multiselect(
+                "Owner Filter",
+                sorted(period_detail["owner"].dropna().astype(str).unique()),
+                placeholder="All owners",
+                key=f"overview_owners_{selected_change_month:%Y%m}",
+            )
+        with overview_filters[3]:
+            overview_minimum_change = st.number_input(
+                "Minimum |Δ Shares|",
+                min_value=0.0,
+                step=1_000_000.0,
+                value=0.0,
+                format="%.0f",
+                key=f"overview_min_change_{selected_change_month:%Y%m}",
+            )
+        period_detail = filter_market_overview(
+            period_detail,
+            tickers=overview_tickers,
+            owners=overview_owners,
+            minimum_absolute_change=overview_minimum_change,
         )
-        period_owners = (
-            owner_changes[owner_changes["date"].eq(selected_change_month)]
-            .sort_values(["absolute_change", "owner"], ascending=[False, True])
-            .reset_index(drop=True)
-        )
+        period_stocks = stock_change_summary(period_detail)
+        period_owners = owner_change_summary(period_detail)
 
         render_monthly_change_kpis(
             period_stocks,
@@ -2091,7 +2129,7 @@ with monthly_changes_tab:
             st.caption("Select an owner row to see the stocks with reported ownership changes.")
 
 
-with daily_market_subtab:
+if active_page == "Overview" and overview_section == "5% Daily Movement":
     if daily_movements.empty:
         st.info("No daily >5% movement data is available.")
     else:

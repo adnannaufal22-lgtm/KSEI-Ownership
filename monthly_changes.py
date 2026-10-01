@@ -196,3 +196,31 @@ def owner_change_summary(detail: pd.DataFrame) -> pd.DataFrame:
         ["date", "absolute_change", "owner"],
         ascending=[True, False, True],
     ).reset_index(drop=True)
+
+
+def filter_market_overview(
+    detail: pd.DataFrame,
+    *,
+    tickers: list[str] | tuple[str, ...] | set[str] | None = None,
+    owners: list[str] | tuple[str, ...] | set[str] | None = None,
+    minimum_absolute_change: float = 0.0,
+) -> pd.DataFrame:
+    """Apply optional market-overview filters without introducing ticker state.
+
+    Empty ticker and owner selections intentionally mean *all* values, which
+    keeps the Overview independent from ticker-level pages.
+    """
+    if detail.empty:
+        return detail.copy()
+    filtered = detail.copy()
+    if tickers:
+        filtered = filtered[filtered["stock"].astype(str).isin(map(str, tickers))]
+    if owners:
+        filtered = filtered[filtered["owner"].astype(str).isin(map(str, owners))]
+    filtered = filtered[
+        pd.to_numeric(filtered["change_shares"], errors="coerce")
+        .abs()
+        .fillna(0)
+        .ge(float(minimum_absolute_change))
+    ]
+    return filtered.copy()
