@@ -1047,6 +1047,32 @@ div[data-baseweb="select"] > div:focus-within {
   white-space: nowrap;
 }
 
+.account-definition {
+  display: flex;
+  align-items: center;
+  gap: .8rem;
+  margin: .45rem 0 .2rem;
+  padding: .45rem .62rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  border-radius: 2px;
+  background: var(--panel-2);
+  font-family: var(--mono);
+}
+
+.account-definition b {
+  flex: 0 0 auto;
+  color: var(--amber);
+  font-size: .58rem;
+  letter-spacing: .045em;
+}
+
+.account-definition span {
+  color: var(--muted);
+  font-size: .57rem;
+  line-height: 1.45;
+}
+
 .account-interpretation {
   display: grid;
   grid-template-columns: 170px 240px minmax(0, 1fr);

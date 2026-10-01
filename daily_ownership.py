@@ -1000,3 +1000,85 @@ def load_daily_ownership_folder(
         files,
         cache_dir=folder.parent / ".cache" / "daily_5pct",
     )
+
+
+def build_account_position_pivots(
+    accounts: pd.DataFrame,
+    ticker: str,
+    owner_normalized: str,
+    dimension: str = "institution_account",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return Date x Account positions and their daily change from account-level shares.
+
+    The position table is built exclusively from ``Jumlah Saham`` (the normalized
+    ``shares`` column).  It intentionally does not use combined beneficial-owner
+    holdings, so an account movement cannot be mistaken for investor accumulation
+    or selling.
+    """
+    valid_dimensions = {"institution_account", "institution", "account"}
+    if dimension not in valid_dimensions:
+        raise ValueError(
+            f"Unsupported account dimension {dimension!r}; expected one of {sorted(valid_dimensions)}"
+        )
+    if accounts.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    scoped = accounts[
+        accounts["ticker"].astype(str).eq(str(ticker))
+        & accounts["owner_normalized"].astype(str).eq(str(owner_normalized))
+    ].copy()
+    if scoped.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce")
+    scoped["shares"] = pd.to_numeric(scoped["shares"], errors="coerce")
+    scoped = scoped.dropna(subset=["date", "shares"])
+    if scoped.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    # A report can repeat the previous day's complete account snapshot. Prefer
+    # the workbook whose source date is closest to the displayed date so the
+    # same position is not counted once from each adjacent workbook.
+    if "source_date" in scoped:
+        source_dates = pd.to_datetime(scoped["source_date"], errors="coerce")
+        source_distance = (source_dates - scoped["date"]).abs()
+        nearest_distance = source_distance.groupby(scoped["date"]).transform("min")
+        scoped = scoped[
+            source_distance.isna()
+            | nearest_distance.isna()
+            | source_distance.eq(nearest_distance)
+        ].copy()
+
+    institutions = scoped["account_holder"].fillna("(MISSING ACCOUNT HOLDER)").astype(str)
+    account_names = scoped["account_name"].fillna("(MISSING ACCOUNT NAME)").astype(str)
+    if dimension == "institution":
+        scoped["account_dimension"] = institutions
+    elif dimension == "account":
+        scoped["account_dimension"] = account_names
+    else:
+        scoped["account_dimension"] = institutions.where(
+            institutions.eq(account_names),
+            institutions + " · " + account_names,
+        )
+
+    grouped = (
+        scoped.groupby(["date", "account_dimension"], observed=True, as_index=False)["shares"]
+        .sum(min_count=1)
+    )
+    position = grouped.pivot_table(
+        index="date",
+        columns="account_dimension",
+        values="shares",
+        aggfunc="sum",
+        fill_value=0.0,
+    ).sort_index()
+    position.index = pd.DatetimeIndex(position.index, name="Date")
+    position.columns.name = None
+    if not position.empty:
+        latest_order = position.iloc[-1].sort_values(ascending=False, kind="stable").index
+        position = position.loc[:, latest_order]
+
+    movement = position.diff()
+    movement.index.name = "Date"
+    movement.columns.name = None
+    return position, movement

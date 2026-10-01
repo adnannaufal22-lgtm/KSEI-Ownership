@@ -8,6 +8,7 @@ from daily_ownership import (
     SIGNAL_NO_LONGER_REPORTED,
     SIGNAL_SELLING,
     SIGNAL_UNCHANGED,
+    build_account_position_pivots,
     classify_owner_movement,
     load_daily_ownership_files,
     parse_ksei_share_value,
@@ -117,3 +118,79 @@ def test_multiple_daily_files_are_deduplicated() -> None:
             "account_occurrence",
         ]
     ).any()
+
+
+def test_account_position_pivot_uses_account_shares_and_daily_diff() -> None:
+    accounts = pd.DataFrame(
+        [
+            {
+                "date": "2026-09-28",
+                "source_date": "2026-09-28",
+                "ticker": "BMTR",
+                "owner_normalized": "PT MNC ASIA HOLDING TBK",
+                "account_holder": "PT MNC SEKURITAS",
+                "account_name": "MNC ACCOUNT",
+                "shares": 500_000_000,
+            },
+            {
+                "date": "2026-09-28",
+                "source_date": "2026-09-28",
+                "ticker": "BMTR",
+                "owner_normalized": "PT MNC ASIA HOLDING TBK",
+                "account_holder": "PT KIWOOM SEKURITAS INDONESIA",
+                "account_name": "KIWOOM ACCOUNT",
+                "shares": 100_000_000,
+            },
+            {
+                "date": "2026-09-29",
+                "source_date": "2026-09-29",
+                "ticker": "BMTR",
+                "owner_normalized": "PT MNC ASIA HOLDING TBK",
+                "account_holder": "PT MNC SEKURITAS",
+                "account_name": "MNC ACCOUNT",
+                "shares": 418_672_500,
+            },
+            {
+                "date": "2026-09-29",
+                "source_date": "2026-09-29",
+                "ticker": "BMTR",
+                "owner_normalized": "PT MNC ASIA HOLDING TBK",
+                "account_holder": "PT KIWOOM SEKURITAS INDONESIA",
+                "account_name": "KIWOOM ACCOUNT",
+                "shares": 181_327_500,
+            },
+            # The next report repeats the prior date; it must not double the
+            # 28-Sep position in the cross-file account pivot.
+            {
+                "date": "2026-09-28",
+                "source_date": "2026-09-29",
+                "ticker": "BMTR",
+                "owner_normalized": "PT MNC ASIA HOLDING TBK",
+                "account_holder": "PT MNC SEKURITAS",
+                "account_name": "MNC ACCOUNT",
+                "shares": 500_000_000,
+            },
+            {
+                "date": "2026-09-28",
+                "source_date": "2026-09-29",
+                "ticker": "BMTR",
+                "owner_normalized": "PT MNC ASIA HOLDING TBK",
+                "account_holder": "PT KIWOOM SEKURITAS INDONESIA",
+                "account_name": "KIWOOM ACCOUNT",
+                "shares": 100_000_000,
+            },
+        ]
+    )
+
+    position, movement = build_account_position_pivots(
+        accounts,
+        "BMTR",
+        "PT MNC ASIA HOLDING TBK",
+        "institution",
+    )
+
+    assert position.loc[pd.Timestamp("2026-09-28"), "PT MNC SEKURITAS"] == 500_000_000
+    assert position.loc[pd.Timestamp("2026-09-29"), "PT KIWOOM SEKURITAS INDONESIA"] == 181_327_500
+    assert movement.loc[pd.Timestamp("2026-09-29"), "PT MNC SEKURITAS"] == -81_327_500
+    assert movement.loc[pd.Timestamp("2026-09-29"), "PT KIWOOM SEKURITAS INDONESIA"] == 81_327_500
+    assert movement.iloc[0].isna().all()

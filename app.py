@@ -24,6 +24,7 @@ from daily_ownership import (
     SIGNAL_INTERNAL_TRANSFER,
     SIGNAL_SELLING,
     SIGNAL_UNCHANGED,
+    build_account_position_pivots,
     load_daily_ownership_folder,
     normalize_identity,
 )
@@ -612,6 +613,49 @@ def render_activity_dataframe(
     return []
 
 
+def render_account_pivot(
+    pivot: pd.DataFrame,
+    key: str,
+    *,
+    movement: bool = False,
+    max_height: int = 430,
+) -> None:
+    """Render a compact Date x Account terminal table."""
+    if pivot.empty:
+        st.info("No account-level observations are available for this selection.")
+        return
+
+    view = pivot.copy()
+    view.index = pd.DatetimeIndex(view.index).strftime("%d-%b-%y").str.upper()
+    view.index.name = "Date"
+    view = view.reset_index()
+    value_columns = [column for column in view.columns if column != "Date"]
+    formatter = (
+        signed_shares
+        if movement
+        else lambda value: "—" if pd.isna(value) else f"{float(value):,.0f}"
+    )
+    styled = view.style.format(
+        {column: formatter for column in value_columns},
+        na_rep="—",
+    )
+    styled = styled.set_properties(
+        subset=["Date"],
+        **{"color": "#F1F5F9", "font-weight": "650"},
+    )
+    if movement:
+        styled = styled.map(movement_cell_style, subset=value_columns)
+    height = min(max_height, 39 + 35 * len(view))
+    st.dataframe(
+        styled,
+        width="stretch",
+        height=height,
+        hide_index=True,
+        row_height=34,
+        key=key,
+    )
+
+
 def render_monthly_change_kpis(
     stock_summary: pd.DataFrame,
     detail: pd.DataFrame,
@@ -1006,7 +1050,6 @@ render_terminal_header(identity_code, identity_name, analyze_by, active_metrics)
     type_tab,
     entity_movement_tab,
     monthly_changes_tab,
-    daily_market_tab,
 ) = st.tabs(
     [
         "1% Ownership",
@@ -1015,7 +1058,6 @@ render_terminal_header(identity_code, identity_name, analyze_by, active_metrics)
         "Type",
         "Entity Movement",
         "Monthly Changes",
-        "Daily >5% Movement",
     ]
 )
 
@@ -1104,10 +1146,24 @@ with ownership_tab:
 
 
 with daily_ownership_tab:
+    section(
+        "5% Ownership · Daily KSEI",
+        f"{selected_entity} · beneficial-owner and securities-account monitoring",
+        "WHO changed ownership is measured from combined beneficial ownership; WHERE shares moved is shown separately by securities account.",
+    )
+    owner_subtab, position_subtab, account_movement_subtab, daily_market_subtab = st.tabs(
+        [
+            "Beneficial Owner",
+            "Latest Account Position",
+            "Account Movement",
+            "Daily >5% Movement",
+        ]
+    )
     if daily_owner_data.empty or daily_movements.empty:
-        st.info(
-            "No daily >5% ownership data is available. Add KSEI files to BEI_Data/5% Ownership."
-        )
+        with owner_subtab:
+            st.info(
+                "No daily >5% ownership data is available. Add KSEI files to BEI_Data/5% Ownership."
+            )
     else:
         if analyze_by == "Stock":
             daily_ticker = str(selected_entity)
@@ -1138,16 +1194,13 @@ with daily_ownership_tab:
             ]
 
         if not daily_ticker or ticker_movements.empty:
-            st.info(f"No daily >5% ownership movement is available for {selected_entity}.")
+            with owner_subtab:
+                st.info(f"No daily >5% ownership movement is available for {selected_entity}.")
+            with position_subtab:
+                st.info(f"No securities-account positions are available for {selected_entity}.")
+            with account_movement_subtab:
+                st.info(f"No securities-account movement is available for {selected_entity}.")
         else:
-            section(
-                "5% Ownership · Daily KSEI",
-                f"{daily_ticker} · beneficial-owner and securities-account monitoring",
-                "WHO changed ownership is measured from combined beneficial ownership; WHERE shares moved is shown separately by securities account.",
-            )
-            owner_subtab, position_subtab, account_movement_subtab = st.tabs(
-                ["Beneficial Owner", "Latest Account Position", "Account Movement"]
-            )
             movement_dates = sorted(
                 pd.Timestamp(value) for value in ticker_movements["date"].dropna().unique()
             )
@@ -1309,141 +1362,208 @@ with daily_ownership_tab:
                     )
 
             with position_subtab:
-                latest_position_date = max(
-                    pd.Timestamp(value)
-                    for value in daily_account_data.loc[
-                        daily_account_data["ticker"].eq(daily_ticker), "date"
-                    ].dropna().unique()
-                )
-                position_date = pd.Timestamp(
-                    st.selectbox(
-                        "Position Date",
-                        sorted(
-                            pd.Timestamp(value)
-                            for value in daily_account_data.loc[
-                                daily_account_data["ticker"].eq(daily_ticker), "date"
-                            ].dropna().unique()
-                        ),
-                        index=len(
-                            daily_account_data.loc[
-                                daily_account_data["ticker"].eq(daily_ticker), "date"
-                            ].dropna().unique()
-                        ) - 1,
-                        format_func=lambda value: pd.Timestamp(value).strftime("%d %b %Y"),
-                        key=f"account_position_date_{daily_ticker}",
-                    )
-                )
-                positions = daily_account_data[
+                ticker_accounts = daily_account_data[
                     daily_account_data["ticker"].eq(daily_ticker)
-                    & daily_account_data["date"].eq(position_date)
-                    & daily_account_data["shares"].fillna(0).gt(.5)
                 ].copy()
-                positions = positions.sort_values("shares", ascending=False)
-                table_heading(f"Latest securities-account positions · {position_date:%d %b %Y}")
-                st.caption(
-                    "Account Holder is Nama Pemegang Rekening Efek (custodian/securities institution). "
-                    "Account Name is Nama Rekening Efek. These rows explain where ownership is held; they do not independently define accumulation or selling."
+                position_dates = sorted(
+                    pd.Timestamp(value) for value in ticker_accounts["date"].dropna().unique()
                 )
-                position_display = positions[
-                    ["owner", "account_holder", "account_name", "shares", "raw_share_value", "source_file"]
-                ].rename(
-                    columns={
-                        "owner": "Beneficial Owner",
-                        "account_holder": "Nama Pemegang Rekening Efek",
-                        "account_name": "Nama Rekening Efek",
-                        "shares": "Shares",
-                        "raw_share_value": "Raw Source Value",
-                        "source_file": "Source File",
-                    }
-                )
-                render_activity_dataframe(
-                    position_display,
-                    f"latest_account_positions_{daily_ticker}_{position_date:%Y%m%d}",
-                    {"Shares": "{:,.0f}"},
-                    [],
-                    ["Beneficial Owner", "Nama Pemegang Rekening Efek", "Nama Rekening Efek"],
-                    max_height=620,
-                )
-
-            with account_movement_subtab:
-                account_date = pd.Timestamp(
-                    st.selectbox(
-                        "Movement Date",
-                        movement_dates,
-                        index=len(movement_dates) - 1,
-                        format_func=lambda value: pd.Timestamp(value).strftime("%d %b %Y"),
-                        key=f"account_movement_date_{daily_ticker}",
+                position_control, position_owner_control = st.columns([1, 2.4], gap="small")
+                with position_control:
+                    position_date = pd.Timestamp(
+                        st.selectbox(
+                            "Position Date",
+                            position_dates,
+                            index=len(position_dates) - 1,
+                            format_func=lambda value: pd.Timestamp(value).strftime("%d %b %Y"),
+                            key=f"account_position_date_{daily_ticker}",
+                        )
                     )
-                )
-                owner_rows = ticker_movements[ticker_movements["date"].eq(account_date)]
-                account_owner_labels = (
-                    owner_rows[["owner_normalized", "owner"]]
+                position_owner_rows = ticker_accounts[ticker_accounts["date"].eq(position_date)]
+                position_owner_labels = (
+                    position_owner_rows[["owner_normalized", "owner"]]
                     .drop_duplicates("owner_normalized")
                     .set_index("owner_normalized")["owner"]
                     .to_dict()
                 )
-                account_owner_keys = list(account_owner_labels)
-                account_owner = st.selectbox(
-                    "Beneficial Owner",
-                    account_owner_keys,
-                    format_func=lambda value: account_owner_labels[value],
-                    key=f"account_owner_{daily_ticker}_{account_date:%Y%m%d}",
-                    help="The owner-level net change remains authoritative. Account rows explain where the shares moved.",
+                position_owner_keys = list(position_owner_labels)
+                preferred_position_owner = st.session_state.get(
+                    f"daily_selected_owner_{daily_ticker}"
                 )
-                owner_movement_row = owner_rows[
-                    owner_rows["owner_normalized"].eq(account_owner)
-                ].iloc[0]
-                account_changes = daily_account_movements[
-                    daily_account_movements["ticker"].eq(daily_ticker)
-                    & daily_account_movements["date"].eq(account_date)
-                    & daily_account_movements["owner_normalized"].eq(account_owner)
+                if preferred_position_owner not in position_owner_keys:
+                    preferred_position_owner = position_owner_keys[0]
+                with position_owner_control:
+                    position_owner = st.selectbox(
+                        "Beneficial Owner",
+                        position_owner_keys,
+                        index=position_owner_keys.index(preferred_position_owner),
+                        format_func=lambda value: position_owner_labels[value],
+                        key=f"account_position_owner_{daily_ticker}_{position_date:%Y%m%d}",
+                        help="Select whose latest distribution across securities accounts is shown.",
+                    )
+                positions = position_owner_rows[
+                    position_owner_rows["owner_normalized"].eq(position_owner)
+                    & position_owner_rows["shares"].fillna(0).gt(.5)
                 ].copy()
-                render_account_interpretation(owner_movement_row, account_changes)
-                changed_only = st.toggle(
-                    "Show changed accounts only",
-                    value=True,
-                    key=f"changed_accounts_only_{daily_ticker}_{account_date:%Y%m%d}",
+                positions = (
+                    positions.groupby(
+                        ["account_holder", "account_name"],
+                        observed=True,
+                        as_index=False,
+                    )["shares"]
+                    .sum(min_count=1)
+                    .sort_values("shares", ascending=False)
                 )
-                if changed_only:
-                    account_changes = account_changes[account_changes["delta_shares"].abs().gt(.5)]
-                account_changes = account_changes.assign(
-                    _magnitude=account_changes["delta_shares"].abs()
-                ).sort_values(["_magnitude", "account_holder"], ascending=[False, True])
-                table_heading("Securities-account movement", separated=True)
+                table_heading(
+                    f"Latest account position · {position_owner_labels[position_owner]} · {position_date:%d %b %Y}"
+                )
                 st.caption(
-                    "Nama Pemegang Rekening Efek identifies the institution; Nama Rekening Efek identifies the underlying account name."
+                    "Account Holder is Nama Pemegang Rekening Efek (custodian/securities institution). "
+                    "Account Name is Nama Rekening Efek. This is a current-position view, not movement."
                 )
-                account_display = account_changes[
-                    [
-                        "account_holder",
-                        "account_name",
-                        "previous_shares",
-                        "current_shares",
-                        "delta_shares",
-                        "direction",
-                    ]
+                position_display = positions[
+                    ["account_holder", "account_name", "shares"]
                 ].rename(
                     columns={
                         "account_holder": "Nama Pemegang Rekening Efek",
                         "account_name": "Nama Rekening Efek",
-                        "previous_shares": "Previous Shares",
-                        "current_shares": "Current Shares",
-                        "delta_shares": "Δ Shares",
-                        "direction": "Direction",
+                        "shares": "Shares",
                     }
                 )
                 render_activity_dataframe(
-                    account_display,
-                    f"account_movements_{daily_ticker}_{account_date:%Y%m%d}_{account_owner}_{changed_only}",
-                    {
-                        "Previous Shares": "{:,.0f}",
-                        "Current Shares": "{:,.0f}",
-                        "Δ Shares": signed_shares,
-                    },
-                    ["Δ Shares"],
+                    position_display,
+                    f"latest_account_positions_{daily_ticker}_{position_date:%Y%m%d}_{position_owner}",
+                    {"Shares": "{:,.0f}"},
+                    [],
                     ["Nama Pemegang Rekening Efek", "Nama Rekening Efek"],
-                    max_height=590,
+                    max_height=620,
                 )
+
+            with account_movement_subtab:
+                account_scope = daily_account_data[
+                    daily_account_data["ticker"].eq(daily_ticker)
+                ].copy()
+                account_owner_labels = (
+                    account_scope[["owner_normalized", "owner"]]
+                    .drop_duplicates("owner_normalized")
+                    .set_index("owner_normalized")["owner"]
+                    .to_dict()
+                )
+                if scoped_owner_normalized:
+                    account_owner_labels = {
+                        key: value
+                        for key, value in account_owner_labels.items()
+                        if key == scoped_owner_normalized
+                    }
+                account_owner_keys = list(account_owner_labels)
+                if not account_owner_keys:
+                    st.info("No account-level history is available for this selection.")
+                else:
+                    preferred_account_owner = st.session_state.get(
+                        f"daily_selected_owner_{daily_ticker}"
+                    )
+                    if preferred_account_owner not in account_owner_keys:
+                        preferred_account_owner = account_owner_keys[0]
+                    account_dates = sorted(
+                        pd.Timestamp(value) for value in account_scope["date"].dropna().unique()
+                    )
+                    movement_owner_control, movement_range_control, dimension_control = st.columns(
+                        [2.1, 1.7, 1.7], gap="small"
+                    )
+                    with movement_owner_control:
+                        account_owner = st.selectbox(
+                            "Beneficial Owner",
+                            account_owner_keys,
+                            index=account_owner_keys.index(preferred_account_owner),
+                            format_func=lambda value: account_owner_labels[value],
+                            key=f"account_owner_{daily_ticker}",
+                            help="Select whose securities-account positions are pivoted through time.",
+                        )
+                    with movement_range_control:
+                        account_date_range = st.date_input(
+                            "Date Range",
+                            value=(account_dates[0].date(), account_dates[-1].date()),
+                            min_value=account_dates[0].date(),
+                            max_value=account_dates[-1].date(),
+                            key=f"account_movement_range_{daily_ticker}_{account_owner}",
+                        )
+                    dimension_options = {
+                        "Institution + Account Name": "institution_account",
+                        "Institution only": "institution",
+                        "Account Name only": "account",
+                    }
+                    with dimension_control:
+                        dimension_label = st.selectbox(
+                            "Account Dimension",
+                            list(dimension_options),
+                            key=f"account_dimension_{daily_ticker}_{account_owner}",
+                        )
+
+                    position_pivot, movement_pivot = build_account_position_pivots(
+                        daily_account_data,
+                        daily_ticker,
+                        account_owner,
+                        dimension_options[dimension_label],
+                    )
+                    if isinstance(account_date_range, (tuple, list)) and len(account_date_range) == 2:
+                        range_start, range_end = map(pd.Timestamp, account_date_range)
+                    else:
+                        range_start = range_end = pd.Timestamp(account_date_range)
+                    position_view = position_pivot.loc[
+                        (position_pivot.index >= range_start)
+                        & (position_pivot.index <= range_end)
+                    ]
+                    movement_view = movement_pivot.loc[
+                        (movement_pivot.index >= range_start)
+                        & (movement_pivot.index <= range_end)
+                    ]
+                    active_columns = [
+                        column
+                        for column in position_view.columns
+                        if position_view[column].abs().gt(.5).any()
+                        or movement_view[column].abs().gt(.5).any()
+                    ]
+                    position_view = position_view.loc[:, active_columns]
+                    movement_view = movement_view.loc[:, active_columns]
+
+                    st.markdown(
+                        '<div class="account-definition"><b>ACCOUNT MOVEMENT = WHERE SHARES MOVED</b>'
+                        '<span>Built from account-level Jumlah Saham. An account increase or decrease does not by itself mean the beneficial owner accumulated or sold.</span></div>',
+                        unsafe_allow_html=True,
+                    )
+                    table_heading("Account Position · Date × Account → Shares Held", separated=True)
+                    render_account_pivot(
+                        position_view,
+                        f"account_position_pivot_{daily_ticker}_{account_owner}_{dimension_label}_{range_start:%Y%m%d}_{range_end:%Y%m%d}",
+                    )
+                    table_heading(
+                        "Account Daily Change · Current Position − Previous Position",
+                        separated=True,
+                    )
+                    st.caption(
+                        "Positive values show shares moving into or increasing in an account; negative values show shares moving out or decreasing."
+                    )
+                    render_account_pivot(
+                        movement_view,
+                        f"account_change_pivot_{daily_ticker}_{account_owner}_{dimension_label}_{range_start:%Y%m%d}_{range_end:%Y%m%d}",
+                        movement=True,
+                    )
+
+                    owner_movements_in_range = ticker_movements[
+                        ticker_movements["owner_normalized"].eq(account_owner)
+                        & ticker_movements["date"].between(range_start, range_end)
+                    ].sort_values("date")
+                    if not owner_movements_in_range.empty:
+                        latest_owner_movement = owner_movements_in_range.iloc[-1]
+                        latest_account_changes = daily_account_movements[
+                            daily_account_movements["ticker"].eq(daily_ticker)
+                            & daily_account_movements["owner_normalized"].eq(account_owner)
+                            & daily_account_movements["date"].eq(latest_owner_movement["date"])
+                        ]
+                        render_account_interpretation(
+                            latest_owner_movement,
+                            latest_account_changes,
+                        )
 
             if not daily_quality.empty:
                 with st.expander(
@@ -1971,7 +2091,7 @@ with monthly_changes_tab:
             st.caption("Select an owner row to see the stocks with reported ownership changes.")
 
 
-with daily_market_tab:
+with daily_market_subtab:
     if daily_movements.empty:
         st.info("No daily >5% movement data is available.")
     else:

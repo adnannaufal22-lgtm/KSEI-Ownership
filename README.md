@@ -15,12 +15,13 @@ Double-click **Open Dashboard.bat**. The first launch creates the local environm
 Choose one Stock or one Owner from the selectors in the dashboard header. That selection drives the entity-specific tabs, while the two market-wide movement tabs scan the complete ownership datasets:
 
 1. **1% Ownership** — holder/stock history chart, number-of-shares pivot, and ownership-percentage pivot.
-2. **5% Ownership** — daily beneficial-owner monitoring with separate Beneficial Owner, Latest Account Position, and Account Movement views.
+2. **5% Ownership** — daily beneficial-owner monitoring with Beneficial Owner, Latest Account Position, Account Movement, and Daily >5% Movement sub-tabs.
 3. **Classification** — dynamic investor-classification history and matching pivots.
 4. **Type** — scrip versus scripless and Domestic versus Foreign charts with their pivots placed alongside.
 5. **Entity Movement** — period-over-period movement charts for the selected stock or owner.
 6. **Monthly Changes** — month selector, compact market summary, Top 10/all stock and owner rankings, and clickable row drill-downs showing the counterparties behind each reported change.
-7. **Daily >5% Movement** — market-wide daily scanner with ticker, beneficial owner, signal, securities-account holder, residency, and minimum-change filters.
+
+The market-wide **Daily >5% Movement** scanner is the fourth sub-tab inside **5% Ownership**, not a separate top-level dataset. **Account Movement** is built from `Jumlah Saham` as Date × Account positions and daily differences; beneficial-owner accumulation or selling remains based on `Saham Gabungan Per Investor`.
 
 Classification and Type are stock-level source datasets, so those tabs explain that individual owner analysis is unavailable when Analyze By is set to Owner.
 
