@@ -10,11 +10,22 @@ import pandas as pd
 import streamlit as st
 
 from charts import (
+    daily_owner_trend_chart,
     movement_breakdown_chart,
     monthly_movement_chart,
     ownership_movement_lines,
     scrip_vs_scripless_chart,
     stacked_area_line_chart,
+)
+from daily_ownership import (
+    SIGNAL_ACCUMULATING,
+    SIGNAL_ENTERED,
+    SIGNAL_EXITED,
+    SIGNAL_INTERNAL_TRANSFER,
+    SIGNAL_SELLING,
+    SIGNAL_UNCHANGED,
+    load_daily_ownership_folder,
+    normalize_identity,
 )
 from data_loader import (
     folder_signature,
@@ -45,6 +56,7 @@ DATA_ROOT = APP_DIR / "BEI_Data"
 OWNERSHIP_DIR = DATA_ROOT / "1% Ownership"
 CLASSIFICATION_DIR = DATA_ROOT / "Classification"
 TYPE_DIR = DATA_ROOT / "Type"
+DAILY_OWNERSHIP_DIR = DATA_ROOT / "5% Ownership"
 CONFIG_PATH = APP_DIR / "schema_mapping.json"
 PLOT_CONFIG = {"displayModeBar": False, "responsive": True, "scrollZoom": False}
 LOGGER = logging.getLogger("ksei_dashboard")
@@ -62,7 +74,7 @@ st.markdown(
 )
 
 
-@st.cache_data(show_spinner=False, max_entries=4)
+@st.cache_resource(show_spinner=False, max_entries=4)
 def load_ownership_dataset(
     folder: str,
     signature: tuple[tuple[str, int, int], ...],
@@ -76,7 +88,7 @@ def load_ownership_dataset(
     return standardized, metadata
 
 
-@st.cache_data(show_spinner=False, max_entries=4)
+@st.cache_resource(show_spinner=False, max_entries=4)
 def load_classification_dataset(
     folder: str,
     signature: tuple[tuple[str, int, int], ...],
@@ -85,7 +97,7 @@ def load_classification_dataset(
     return load_classification_folder(folder, json.loads(config_text))
 
 
-@st.cache_data(show_spinner=False, max_entries=4)
+@st.cache_resource(show_spinner=False, max_entries=4)
 def load_type_dataset(
     folder: str,
     signature: tuple[tuple[str, int, int], ...],
@@ -94,7 +106,16 @@ def load_type_dataset(
     return load_type_folder(folder, json.loads(config_text))
 
 
-@st.cache_data(show_spinner=False, max_entries=4)
+@st.cache_resource(show_spinner=False, max_entries=2)
+def load_daily_ownership_dataset(
+    folder: str,
+    signature: tuple[tuple[str, int, int], ...],
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
+    """Load normalized daily >5% data only when its source-file signature changes."""
+    return load_daily_ownership_folder(folder)
+
+
+@st.cache_resource(show_spinner=False, max_entries=4)
 def monthly_change_analysis(
     ownership: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -112,6 +133,38 @@ def empty_ownership_data() -> pd.DataFrame:
             "investor_name",
             "ownership_units",
             "ownership_pct",
+        ]
+    )
+
+
+def empty_classification_data() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "date",
+            "ticker",
+            "security_name",
+            "classification",
+            "ownership_units",
+            "total_scripless",
+            "source_file",
+        ]
+    )
+
+
+def empty_type_data() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "date",
+            "ticker",
+            "number_of_shares",
+            "total_scripless",
+            "scrip_shares",
+            "domestic_foreign",
+            "investor_category",
+            "holding_band",
+            "ownership_units",
+            "ownership_pct",
+            "source_file",
         ]
     )
 
@@ -141,7 +194,7 @@ def load_sources() -> tuple[pd.DataFrame, dict, pd.DataFrame, dict, pd.DataFrame
         )
     except Exception as error:
         LOGGER.exception("Could not load Classification data")
-        classification_data = pd.DataFrame()
+        classification_data = empty_classification_data()
         classification_metadata["issues"] = [str(error)]
 
     try:
@@ -152,7 +205,7 @@ def load_sources() -> tuple[pd.DataFrame, dict, pd.DataFrame, dict, pd.DataFrame
         )
     except Exception as error:
         LOGGER.exception("Could not load Type data")
-        type_data = pd.DataFrame()
+        type_data = empty_type_data()
         type_metadata["issues"] = [str(error)]
 
     for dataset_name, metadata in (
@@ -478,6 +531,7 @@ def render_dashboard_masthead(
     ownership_metadata: dict,
     classification_metadata: dict,
     type_metadata: dict,
+    daily_metadata: dict,
     latest_period: object,
 ) -> None:
     st.markdown(
@@ -491,6 +545,7 @@ def render_dashboard_masthead(
         f'<span>OWN <b>{int(ownership_metadata.get("source_files", 0))}</b></span>'
         f'<span>CLASS <b>{int(classification_metadata.get("source_files", 0))}</b></span>'
         f'<span>TYPE <b>{int(type_metadata.get("source_files", 0))}</b></span>'
+        f'<span>DAILY 5% <b>{int(daily_metadata.get("parsed_files", 0))}</b></span>'
         f'<span>UPDATED <b>{escape(str(latest_period))}</b></span>'
         '<span class="coverage-connected"><i></i>DATA CONNECTED</span>'
         '</div></div>',
@@ -605,6 +660,179 @@ def render_monthly_change_kpis(
     )
 
 
+DAILY_SIGNAL_LABELS = {
+    SIGNAL_ACCUMULATING: "▲ ACCUMULATING",
+    SIGNAL_SELLING: "▼ SELLING",
+    SIGNAL_INTERNAL_TRANSFER: "⇄ INTERNAL TRANSFER",
+    SIGNAL_UNCHANGED: "— UNCHANGED",
+    SIGNAL_ENTERED: "NEW >5%",
+    SIGNAL_EXITED: "EXIT <5%",
+    "NEWLY REPORTED": "NEWLY REPORTED",
+    "NO LONGER REPORTED": "NO LONGER REPORTED",
+    "DATA ISSUE": "DATA ISSUE",
+}
+
+
+def daily_signal_label(signal: object) -> str:
+    return DAILY_SIGNAL_LABELS.get(str(signal), str(signal))
+
+
+def daily_signal_class(signal: object) -> str:
+    value = str(signal)
+    if value in {SIGNAL_ACCUMULATING, SIGNAL_ENTERED}:
+        return "daily-positive"
+    if value in {SIGNAL_SELLING, SIGNAL_EXITED}:
+        return "daily-negative"
+    if value == SIGNAL_INTERNAL_TRANSFER:
+        return "daily-transfer"
+    return "daily-flat"
+
+
+def signed_shares(value: object) -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    numeric = float(value)
+    return "0" if abs(numeric) < .5 else f"{numeric:+,.0f}"
+
+
+def signed_points(value: object) -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    numeric = float(value)
+    return "0.00 pp" if abs(numeric) < 1e-9 else f"{numeric:+.2f} pp"
+
+
+def owner_daily_history(
+    owners: pd.DataFrame,
+    movements: pd.DataFrame,
+    ticker: str,
+    owner_normalized: str,
+) -> pd.DataFrame:
+    history = owners[
+        owners["ticker"].eq(ticker)
+        & owners["owner_normalized"].eq(owner_normalized)
+    ].copy()
+    if history.empty:
+        return history
+    daily_delta = (
+        movements[
+            movements["ticker"].eq(ticker)
+            & movements["owner_normalized"].eq(owner_normalized)
+        ][["date", "delta_shares", "signal"]]
+        .drop_duplicates("date", keep="last")
+        .rename(columns={"delta_shares": "daily_delta_shares"})
+    )
+    history = history.merge(daily_delta, on="date", how="left")
+    history["daily_delta_shares"] = pd.to_numeric(
+        history["daily_delta_shares"], errors="coerce"
+    )
+    return history.sort_values("date").reset_index(drop=True)
+
+
+def render_daily_summary(period: pd.Timestamp, snapshot: pd.DataFrame) -> None:
+    counts = snapshot["signal"].value_counts() if not snapshot.empty else pd.Series(dtype=int)
+    changed_tickers = snapshot.loc[
+        ~snapshot["signal"].eq(SIGNAL_UNCHANGED), "ticker"
+    ].nunique()
+    metrics = [
+        ("REPORT DATE", period.strftime("%d %b %Y").upper(), ""),
+        ("OWNERS", f"{snapshot['owner_normalized'].nunique():,}", ""),
+        ("ACCUMULATING", f"{int(counts.get(SIGNAL_ACCUMULATING, 0)):,}", "daily-positive"),
+        ("SELLING", f"{int(counts.get(SIGNAL_SELLING, 0)):,}", "daily-negative"),
+        ("INTERNAL TRANSFERS", f"{int(counts.get(SIGNAL_INTERNAL_TRANSFER, 0)):,}", "daily-transfer"),
+        ("NEW >5%", f"{int(counts.get(SIGNAL_ENTERED, 0)):,}", "daily-positive"),
+        ("EXIT <5%", f"{int(counts.get(SIGNAL_EXITED, 0)):,}", "daily-negative"),
+        ("TICKERS CHANGED", f"{changed_tickers:,}", ""),
+    ]
+    cells = "".join(
+        f'<span><b>{escape(label)}</b><strong class="{css_class}">{escape(value)}</strong></span>'
+        for label, value, css_class in metrics
+    )
+    st.markdown(f'<div class="daily-summary-strip">{cells}</div>', unsafe_allow_html=True)
+
+
+def render_daily_owner_monitor(snapshot: pd.DataFrame, limit: int = 7) -> None:
+    if snapshot.empty:
+        st.info("No daily owner snapshot is available.")
+        return
+    view = snapshot.sort_values("current_shares", ascending=False).head(limit)
+    rows = []
+    for position, (_, row) in enumerate(view.iterrows(), start=1):
+        rows.append(
+            '<div class="daily-monitor-row">'
+            f'<span class="daily-monitor-rank">{position}</span>'
+            f'<span class="daily-monitor-owner" title="{escape(str(row["owner"]), quote=True)}">{escape(str(row["owner"]))}</span>'
+            '<span class="daily-monitor-value">'
+            f'<strong>{escape(terminal_number(row["current_shares"]))}</strong>'
+            f'<small>{float(row["current_pct"]):.2f}%</small></span>'
+            f'<em class="{daily_signal_class(row["signal"])}">{escape(daily_signal_label(row["signal"]))}</em>'
+            '</div>'
+        )
+    st.markdown(
+        '<div class="daily-monitor"><div class="daily-monitor-header">LATEST BENEFICIAL OWNERS'
+        '<span title="Beneficial Owner is Nama Pemegang Saham and determines the economic ownership signal.">ⓘ</span>'
+        f'</div>{"".join(rows)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_owner_metric_strip(history: pd.DataFrame, owner_label: str) -> None:
+    if history.empty:
+        return
+    shares = pd.to_numeric(history["shares"], errors="coerce")
+    current = shares.iloc[-1]
+    current_pct = pd.to_numeric(history["ownership_pct"], errors="coerce").iloc[-1]
+
+    def period_change(offset: int) -> str:
+        if len(shares) <= offset or pd.isna(current) or pd.isna(shares.iloc[-offset - 1]):
+            return "—"
+        return signed_shares(float(current) - float(shares.iloc[-offset - 1]))
+
+    signals = history.get("signal", pd.Series(dtype=str))
+    values = [
+        ("CURRENT SHARES", f"{current:,.0f}"),
+        ("CURRENT OWNERSHIP", f"{current_pct:.2f}%"),
+        ("1D CHANGE", period_change(1)),
+        ("5D CHANGE", period_change(5)),
+        ("20D CHANGE", period_change(20)),
+        ("HIGH", f"{shares.max():,.0f}"),
+        ("LOW", f"{shares.min():,.0f}"),
+        ("UP / DOWN DAYS", f"{signals.eq(SIGNAL_ACCUMULATING).sum()} / {signals.eq(SIGNAL_SELLING).sum()}"),
+    ]
+    cells = "".join(
+        f'<span><b>{escape(label)}</b><strong>{escape(value)}</strong></span>'
+        for label, value in values
+    )
+    st.markdown(
+        f'<div class="owner-metric-title">{escape(owner_label)}</div>'
+        f'<div class="owner-metric-strip">{cells}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_account_interpretation(
+    owner_movement: pd.Series,
+    account_changes: pd.DataFrame,
+) -> None:
+    changed = account_changes[account_changes["delta_shares"].abs().gt(.5)].copy()
+    changed = changed.sort_values("delta_shares")
+    accounts_html = "".join(
+        '<span class="account-shift">'
+        f'<b>{escape(str(row["account_holder"]))}</b>'
+        f'<em class="{"daily-positive" if float(row["delta_shares"]) > 0 else "daily-negative"}">'
+        f'{escape(signed_shares(row["delta_shares"]))}</em></span>'
+        for _, row in changed.iterrows()
+    )
+    st.markdown(
+        '<div class="account-interpretation">'
+        f'<span><b>OWNER NET CHANGE</b><strong>{escape(signed_shares(owner_movement["delta_shares"]))}</strong></span>'
+        f'<span><b>CLASSIFICATION</b><strong class="{daily_signal_class(owner_movement["signal"])}">{escape(daily_signal_label(owner_movement["signal"]))}</strong></span>'
+        f'<div class="account-shifts">{accounts_html or "<small>NO ACCOUNT-LEVEL CHANGE</small>"}</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
 with st.spinner("Loading monthly ownership history…"):
     (
         ownership_data,
@@ -614,6 +842,29 @@ with st.spinner("Loading monthly ownership history…"):
         type_data,
         type_metadata,
     ) = load_sources()
+
+daily_metadata: dict = {"source_files": 0, "parsed_files": 0, "quality_warnings": 0}
+try:
+    with st.spinner("Loading daily >5% ownership history…"):
+        (
+            daily_owner_data,
+            daily_account_data,
+            daily_movements,
+            daily_account_movements,
+            daily_quality,
+            daily_metadata,
+        ) = load_daily_ownership_dataset(
+            str(DAILY_OWNERSHIP_DIR),
+            folder_signature(DAILY_OWNERSHIP_DIR),
+        )
+except Exception as error:
+    LOGGER.exception("Could not load daily >5%% Ownership data")
+    daily_owner_data = pd.DataFrame()
+    daily_account_data = pd.DataFrame()
+    daily_movements = pd.DataFrame()
+    daily_account_movements = pd.DataFrame()
+    daily_quality = pd.DataFrame()
+    daily_metadata["issues"] = [str(error)]
 
 
 stock_names: dict[str, str] = {}
@@ -637,15 +888,25 @@ if not classification_data.empty:
         .astype(str)
         .to_dict()
     )
+if not daily_owner_data.empty:
+    stock_names.update(
+        daily_owner_data[["ticker", "issuer"]]
+        .dropna(subset=["ticker"])
+        .drop_duplicates("ticker")
+        .set_index("ticker")["issuer"]
+        .fillna("")
+        .astype(str)
+        .to_dict()
+    )
 stock_options = sorted(
     set(stock_names)
     | (set(classification_data["ticker"].dropna().astype(str)) if "ticker" in classification_data else set())
     | (set(type_data["ticker"].dropna().astype(str)) if "ticker" in type_data else set())
+    | (set(daily_owner_data["ticker"].dropna().astype(str)) if "ticker" in daily_owner_data else set())
 )
-owner_options = (
-    sorted(ownership_data["investor_name"].dropna().astype(str).unique())
-    if "investor_name" in ownership_data
-    else []
+owner_options = sorted(
+    (set(ownership_data["investor_name"].dropna().astype(str)) if "investor_name" in ownership_data else set())
+    | (set(daily_owner_data["owner"].dropna().astype(str)) if "owner" in daily_owner_data else set())
 )
 
 holder_link_target = st.query_params.get("holder")
@@ -705,6 +966,7 @@ render_dashboard_masthead(
     ownership_metadata,
     classification_metadata,
     type_metadata,
+    daily_metadata,
     active_metrics["latest_period"],
 )
 
@@ -737,8 +999,24 @@ identity_name = stock_names.get(selected_entity, "") if analyze_by == "Stock" el
 render_terminal_header(identity_code, identity_name, analyze_by, active_metrics)
 
 
-ownership_tab, classification_tab, type_tab, entity_movement_tab, monthly_changes_tab = st.tabs(
-    ["1% Ownership", "Classification", "Type", "Entity Movement", "Monthly Changes"]
+(
+    ownership_tab,
+    daily_ownership_tab,
+    classification_tab,
+    type_tab,
+    entity_movement_tab,
+    monthly_changes_tab,
+    daily_market_tab,
+) = st.tabs(
+    [
+        "1% Ownership",
+        "5% Ownership",
+        "Classification",
+        "Type",
+        "Entity Movement",
+        "Monthly Changes",
+        "Daily >5% Movement",
+    ]
 )
 
 
@@ -823,6 +1101,356 @@ with ownership_tab:
             holder_links=analyze_by == "Stock",
         )
         st.caption("Blank cells represent missing observations, not zero ownership.")
+
+
+with daily_ownership_tab:
+    if daily_owner_data.empty or daily_movements.empty:
+        st.info(
+            "No daily >5% ownership data is available. Add KSEI files to BEI_Data/5% Ownership."
+        )
+    else:
+        if analyze_by == "Stock":
+            daily_ticker = str(selected_entity)
+            scoped_owner_normalized = None
+        else:
+            scoped_owner_normalized = normalize_identity(selected_entity)
+            owner_tickers = sorted(
+                daily_owner_data.loc[
+                    daily_owner_data["owner_normalized"].eq(scoped_owner_normalized),
+                    "ticker",
+                ].dropna().astype(str).unique()
+            )
+            if not owner_tickers:
+                st.info(f"No daily >5% ownership history is available for {selected_entity}.")
+                daily_ticker = ""
+            else:
+                daily_ticker = st.selectbox(
+                    "Daily >5% Stock",
+                    owner_tickers,
+                    format_func=lambda ticker: f"{ticker} · {stock_names.get(ticker, '')}".rstrip(" ·"),
+                    key="daily_owner_ticker",
+                )
+
+        ticker_movements = daily_movements[daily_movements["ticker"].eq(daily_ticker)].copy()
+        if scoped_owner_normalized:
+            ticker_movements = ticker_movements[
+                ticker_movements["owner_normalized"].eq(scoped_owner_normalized)
+            ]
+
+        if not daily_ticker or ticker_movements.empty:
+            st.info(f"No daily >5% ownership movement is available for {selected_entity}.")
+        else:
+            section(
+                "5% Ownership · Daily KSEI",
+                f"{daily_ticker} · beneficial-owner and securities-account monitoring",
+                "WHO changed ownership is measured from combined beneficial ownership; WHERE shares moved is shown separately by securities account.",
+            )
+            owner_subtab, position_subtab, account_movement_subtab = st.tabs(
+                ["Beneficial Owner", "Latest Account Position", "Account Movement"]
+            )
+            movement_dates = sorted(
+                pd.Timestamp(value) for value in ticker_movements["date"].dropna().unique()
+            )
+
+            with owner_subtab:
+                control_date, control_sort, control_owner, control_metric = st.columns(
+                    [1.1, 1.35, 2.4, 1.45], gap="small"
+                )
+                with control_date:
+                    selected_daily_date = pd.Timestamp(
+                        st.selectbox(
+                            "Report Date",
+                            movement_dates,
+                            index=len(movement_dates) - 1,
+                            format_func=lambda value: pd.Timestamp(value).strftime("%d %b %Y"),
+                            key=f"daily_report_date_{daily_ticker}_{analyze_by}",
+                        )
+                    )
+                snapshot = ticker_movements[
+                    ticker_movements["date"].eq(selected_daily_date)
+                ].copy()
+                with control_sort:
+                    sort_mode = st.selectbox(
+                        "Sort Owners",
+                        ["Largest absolute change", "Largest accumulation", "Largest selling", "Ownership percentage"],
+                        key=f"daily_sort_{daily_ticker}",
+                    )
+
+                owner_labels = (
+                    snapshot[["owner_normalized", "owner"]]
+                    .drop_duplicates("owner_normalized")
+                    .set_index("owner_normalized")["owner"]
+                    .to_dict()
+                )
+                owner_keys = list(owner_labels)
+                preferred_owner = st.session_state.get(f"daily_selected_owner_{daily_ticker}")
+                if preferred_owner not in owner_keys:
+                    internal = snapshot[
+                        snapshot["signal"].eq(SIGNAL_INTERNAL_TRANSFER)
+                    ]
+                    preferred_owner = (
+                        str(internal.iloc[0]["owner_normalized"])
+                        if not internal.empty
+                        else str(snapshot.sort_values("current_shares", ascending=False).iloc[0]["owner_normalized"])
+                    )
+                with control_owner:
+                    selected_daily_owner = st.selectbox(
+                        "Beneficial Owner ⓘ",
+                        owner_keys,
+                        index=owner_keys.index(preferred_owner),
+                        format_func=lambda value: owner_labels[value],
+                        help="Beneficial Owner is Nama Pemegang Saham. The combined investor holding determines accumulation or selling.",
+                        key=f"daily_owner_picker_{daily_ticker}_{selected_daily_date:%Y%m%d}",
+                    )
+                st.session_state[f"daily_selected_owner_{daily_ticker}"] = selected_daily_owner
+                with control_metric:
+                    trend_metric = st.selectbox(
+                        "Trend Metric",
+                        ["Shares", "Ownership %", "Daily Δ Shares"],
+                        key=f"daily_metric_{daily_ticker}",
+                    )
+
+                if sort_mode == "Largest accumulation":
+                    snapshot = snapshot.sort_values(["delta_shares", "current_pct"], ascending=[False, False])
+                elif sort_mode == "Largest selling":
+                    snapshot = snapshot.sort_values(["delta_shares", "current_pct"], ascending=[True, False])
+                elif sort_mode == "Ownership percentage":
+                    snapshot = snapshot.sort_values("current_pct", ascending=False)
+                else:
+                    snapshot = snapshot.assign(_magnitude=snapshot["delta_shares"].abs()).sort_values(
+                        ["_magnitude", "current_pct"], ascending=[False, False]
+                    )
+
+                render_daily_summary(selected_daily_date, snapshot)
+                selected_history = owner_daily_history(
+                    daily_owner_data,
+                    daily_movements,
+                    daily_ticker,
+                    selected_daily_owner,
+                )
+                render_owner_metric_strip(selected_history, owner_labels[selected_daily_owner])
+                trend_column, monitor_column = st.columns([2.35, 1], gap="small")
+                with trend_column:
+                    st.plotly_chart(
+                        daily_owner_trend_chart(
+                            selected_history,
+                            trend_metric,
+                            f"{owner_labels[selected_daily_owner]} · daily position",
+                        ),
+                        width="stretch",
+                        config=PLOT_CONFIG,
+                        key=f"daily_owner_trend_{daily_ticker}_{selected_daily_owner}_{trend_metric}",
+                    )
+                with monitor_column:
+                    render_daily_owner_monitor(snapshot)
+
+                table_heading("Beneficial-owner movement", separated=True)
+                movement_display = snapshot[
+                    [
+                        "owner",
+                        "previous_shares",
+                        "current_shares",
+                        "delta_shares",
+                        "previous_pct",
+                        "current_pct",
+                        "delta_pct_point",
+                        "signal",
+                        "number_of_accounts",
+                        "local_foreign",
+                    ]
+                ].rename(
+                    columns={
+                        "owner": "Owner",
+                        "previous_shares": "Previous Shares",
+                        "current_shares": "Current Shares",
+                        "delta_shares": "Δ Shares",
+                        "previous_pct": "Previous %",
+                        "current_pct": "Current %",
+                        "delta_pct_point": "Δ pp",
+                        "signal": "Signal",
+                        "number_of_accounts": "Accounts",
+                        "local_foreign": "Local / Foreign",
+                    }
+                )
+                movement_display["Signal"] = movement_display["Signal"].map(daily_signal_label)
+                selected_rows = render_activity_dataframe(
+                    movement_display,
+                    f"daily_owner_table_{daily_ticker}_{selected_daily_date:%Y%m%d}_{sort_mode}",
+                    {
+                        "Previous Shares": "{:,.0f}",
+                        "Current Shares": "{:,.0f}",
+                        "Δ Shares": signed_shares,
+                        "Previous %": "{:.2f}%",
+                        "Current %": "{:.2f}%",
+                        "Δ pp": signed_points,
+                        "Accounts": "{:,.0f}",
+                    },
+                    ["Δ Shares", "Δ pp"],
+                    ["Owner"],
+                    selectable=True,
+                    max_height=390,
+                )
+                if selected_rows:
+                    selected_daily_owner = str(snapshot.iloc[selected_rows[0]]["owner_normalized"])
+                    st.session_state[f"daily_selected_owner_{daily_ticker}"] = selected_daily_owner
+
+                selected_owner_movement = ticker_movements[
+                    ticker_movements["date"].eq(selected_daily_date)
+                    & ticker_movements["owner_normalized"].eq(selected_daily_owner)
+                ]
+                selected_account_changes = daily_account_movements[
+                    daily_account_movements["ticker"].eq(daily_ticker)
+                    & daily_account_movements["date"].eq(selected_daily_date)
+                    & daily_account_movements["owner_normalized"].eq(selected_daily_owner)
+                ]
+                if not selected_owner_movement.empty:
+                    render_account_interpretation(
+                        selected_owner_movement.iloc[0], selected_account_changes
+                    )
+
+            with position_subtab:
+                latest_position_date = max(
+                    pd.Timestamp(value)
+                    for value in daily_account_data.loc[
+                        daily_account_data["ticker"].eq(daily_ticker), "date"
+                    ].dropna().unique()
+                )
+                position_date = pd.Timestamp(
+                    st.selectbox(
+                        "Position Date",
+                        sorted(
+                            pd.Timestamp(value)
+                            for value in daily_account_data.loc[
+                                daily_account_data["ticker"].eq(daily_ticker), "date"
+                            ].dropna().unique()
+                        ),
+                        index=len(
+                            daily_account_data.loc[
+                                daily_account_data["ticker"].eq(daily_ticker), "date"
+                            ].dropna().unique()
+                        ) - 1,
+                        format_func=lambda value: pd.Timestamp(value).strftime("%d %b %Y"),
+                        key=f"account_position_date_{daily_ticker}",
+                    )
+                )
+                positions = daily_account_data[
+                    daily_account_data["ticker"].eq(daily_ticker)
+                    & daily_account_data["date"].eq(position_date)
+                    & daily_account_data["shares"].fillna(0).gt(.5)
+                ].copy()
+                positions = positions.sort_values("shares", ascending=False)
+                table_heading(f"Latest securities-account positions · {position_date:%d %b %Y}")
+                st.caption(
+                    "Account Holder is Nama Pemegang Rekening Efek (custodian/securities institution). "
+                    "Account Name is Nama Rekening Efek. These rows explain where ownership is held; they do not independently define accumulation or selling."
+                )
+                position_display = positions[
+                    ["owner", "account_holder", "account_name", "shares", "raw_share_value", "source_file"]
+                ].rename(
+                    columns={
+                        "owner": "Beneficial Owner",
+                        "account_holder": "Nama Pemegang Rekening Efek",
+                        "account_name": "Nama Rekening Efek",
+                        "shares": "Shares",
+                        "raw_share_value": "Raw Source Value",
+                        "source_file": "Source File",
+                    }
+                )
+                render_activity_dataframe(
+                    position_display,
+                    f"latest_account_positions_{daily_ticker}_{position_date:%Y%m%d}",
+                    {"Shares": "{:,.0f}"},
+                    [],
+                    ["Beneficial Owner", "Nama Pemegang Rekening Efek", "Nama Rekening Efek"],
+                    max_height=620,
+                )
+
+            with account_movement_subtab:
+                account_date = pd.Timestamp(
+                    st.selectbox(
+                        "Movement Date",
+                        movement_dates,
+                        index=len(movement_dates) - 1,
+                        format_func=lambda value: pd.Timestamp(value).strftime("%d %b %Y"),
+                        key=f"account_movement_date_{daily_ticker}",
+                    )
+                )
+                owner_rows = ticker_movements[ticker_movements["date"].eq(account_date)]
+                account_owner_labels = (
+                    owner_rows[["owner_normalized", "owner"]]
+                    .drop_duplicates("owner_normalized")
+                    .set_index("owner_normalized")["owner"]
+                    .to_dict()
+                )
+                account_owner_keys = list(account_owner_labels)
+                account_owner = st.selectbox(
+                    "Beneficial Owner",
+                    account_owner_keys,
+                    format_func=lambda value: account_owner_labels[value],
+                    key=f"account_owner_{daily_ticker}_{account_date:%Y%m%d}",
+                    help="The owner-level net change remains authoritative. Account rows explain where the shares moved.",
+                )
+                owner_movement_row = owner_rows[
+                    owner_rows["owner_normalized"].eq(account_owner)
+                ].iloc[0]
+                account_changes = daily_account_movements[
+                    daily_account_movements["ticker"].eq(daily_ticker)
+                    & daily_account_movements["date"].eq(account_date)
+                    & daily_account_movements["owner_normalized"].eq(account_owner)
+                ].copy()
+                render_account_interpretation(owner_movement_row, account_changes)
+                changed_only = st.toggle(
+                    "Show changed accounts only",
+                    value=True,
+                    key=f"changed_accounts_only_{daily_ticker}_{account_date:%Y%m%d}",
+                )
+                if changed_only:
+                    account_changes = account_changes[account_changes["delta_shares"].abs().gt(.5)]
+                account_changes = account_changes.assign(
+                    _magnitude=account_changes["delta_shares"].abs()
+                ).sort_values(["_magnitude", "account_holder"], ascending=[False, True])
+                table_heading("Securities-account movement", separated=True)
+                st.caption(
+                    "Nama Pemegang Rekening Efek identifies the institution; Nama Rekening Efek identifies the underlying account name."
+                )
+                account_display = account_changes[
+                    [
+                        "account_holder",
+                        "account_name",
+                        "previous_shares",
+                        "current_shares",
+                        "delta_shares",
+                        "direction",
+                    ]
+                ].rename(
+                    columns={
+                        "account_holder": "Nama Pemegang Rekening Efek",
+                        "account_name": "Nama Rekening Efek",
+                        "previous_shares": "Previous Shares",
+                        "current_shares": "Current Shares",
+                        "delta_shares": "Δ Shares",
+                        "direction": "Direction",
+                    }
+                )
+                render_activity_dataframe(
+                    account_display,
+                    f"account_movements_{daily_ticker}_{account_date:%Y%m%d}_{account_owner}_{changed_only}",
+                    {
+                        "Previous Shares": "{:,.0f}",
+                        "Current Shares": "{:,.0f}",
+                        "Δ Shares": signed_shares,
+                    },
+                    ["Δ Shares"],
+                    ["Nama Pemegang Rekening Efek", "Nama Rekening Efek"],
+                    max_height=590,
+                )
+
+            if not daily_quality.empty:
+                with st.expander(
+                    f"Data quality and audit log · {len(daily_quality):,} warning(s)",
+                    expanded=False,
+                ):
+                    st.dataframe(daily_quality, width="stretch", hide_index=True)
 
 
 with classification_tab:
@@ -963,27 +1591,6 @@ with type_tab:
                     config=PLOT_CONFIG,
                     key=f"scrip_chart_{selected_entity}",
                 )
-            with share_form_pivot_column:
-                table_heading("Number of shares by form")
-                render_pivot(
-                    share_form_pivot,
-                    "share_type",
-                    "Type",
-                    "comma",
-                    f"share_form_pivot_{selected_entity}",
-                    compact=True,
-                )
-                table_heading("Monthly change (%)", separated=True)
-                render_pivot(
-                    share_form_change,
-                    "share_type",
-                    "Type",
-                    "signed_pct",
-                    f"share_form_change_{selected_entity}",
-                    compact=True,
-                    heatmap=True,
-                )
-
             section(
                 "Type · Residency",
                 f"{context_name} domestic versus foreign movement",
@@ -1362,3 +1969,233 @@ with monthly_changes_tab:
             )
         else:
             st.caption("Select an owner row to see the stocks with reported ownership changes.")
+
+
+with daily_market_tab:
+    if daily_movements.empty:
+        st.info("No daily >5% movement data is available.")
+    else:
+        section(
+            "Market-wide scanner",
+            "Daily >5% Movement",
+            "Beneficial-owner changes are separated from transfers between securities accounts.",
+        )
+        all_daily_dates = sorted(
+            pd.Timestamp(value) for value in daily_movements["date"].dropna().unique()
+        )
+        filter_row_1 = st.columns([1.15, 1.35, 1.8, 1.5], gap="small")
+        with filter_row_1[0]:
+            scanner_date = pd.Timestamp(
+                st.selectbox(
+                    "Date",
+                    all_daily_dates,
+                    index=len(all_daily_dates) - 1,
+                    format_func=lambda value: pd.Timestamp(value).strftime("%d %b %Y"),
+                    key="daily_scanner_date",
+                )
+            )
+        scanner_base = daily_movements[daily_movements["date"].eq(scanner_date)].copy()
+        with filter_row_1[1]:
+            ticker_filter = st.multiselect(
+                "Ticker",
+                sorted(scanner_base["ticker"].dropna().astype(str).unique()),
+                placeholder="All tickers",
+                key="daily_scanner_tickers",
+            )
+        with filter_row_1[2]:
+            owner_filter = st.multiselect(
+                "Beneficial Owner",
+                sorted(scanner_base["owner"].dropna().astype(str).unique()),
+                placeholder="All owners",
+                key="daily_scanner_owners",
+            )
+        with filter_row_1[3]:
+            signal_filter = st.multiselect(
+                "Signal",
+                sorted(scanner_base["signal"].dropna().astype(str).unique()),
+                placeholder="All signals",
+                format_func=daily_signal_label,
+                key="daily_scanner_signals",
+            )
+
+        date_account_movements = daily_account_movements[
+            daily_account_movements["date"].eq(scanner_date)
+        ]
+        filter_row_2 = st.columns([1.8, 1.2, 1, 1], gap="small")
+        with filter_row_2[0]:
+            account_holder_filter = st.multiselect(
+                "Nama Pemegang Rekening Efek",
+                sorted(date_account_movements["account_holder"].dropna().astype(str).unique()),
+                placeholder="All account institutions",
+                help="Filters owner movements to cases involving the selected securities institution or custodian.",
+                key="daily_scanner_account_holders",
+            )
+        with filter_row_2[1]:
+            residency_filter = st.multiselect(
+                "Local / Foreign",
+                sorted(scanner_base["local_foreign"].dropna().astype(str).unique()),
+                placeholder="All",
+                key="daily_scanner_residency",
+            )
+        with filter_row_2[2]:
+            minimum_shares = st.number_input(
+                "Minimum |Δ Shares|",
+                min_value=0.0,
+                step=1_000_000.0,
+                value=0.0,
+                format="%.0f",
+                key="daily_scanner_min_shares",
+            )
+        with filter_row_2[3]:
+            minimum_pct = st.number_input(
+                "Minimum |Δ pp|",
+                min_value=0.0,
+                step=0.01,
+                value=0.0,
+                format="%.2f",
+                key="daily_scanner_min_pct",
+            )
+
+        scanner = scanner_base.copy()
+        if ticker_filter:
+            scanner = scanner[scanner["ticker"].isin(ticker_filter)]
+        if owner_filter:
+            scanner = scanner[scanner["owner"].isin(owner_filter)]
+        if signal_filter:
+            scanner = scanner[scanner["signal"].isin(signal_filter)]
+        if residency_filter:
+            scanner = scanner[scanner["local_foreign"].isin(residency_filter)]
+        scanner = scanner[
+            scanner["delta_shares"].abs().fillna(0).ge(minimum_shares)
+            & scanner["delta_pct_point"].abs().fillna(0).ge(minimum_pct)
+        ]
+        if account_holder_filter:
+            matching_accounts = date_account_movements[
+                date_account_movements["account_holder"].isin(account_holder_filter)
+            ][["ticker", "owner_normalized"]].drop_duplicates()
+            scanner = scanner.merge(
+                matching_accounts,
+                on=["ticker", "owner_normalized"],
+                how="inner",
+            )
+
+        scanner = scanner.assign(_magnitude=scanner["delta_shares"].abs()).sort_values(
+            ["_magnitude", "ticker", "owner"], ascending=[False, True, True]
+        ).reset_index(drop=True)
+        render_daily_summary(scanner_date, scanner)
+        st.caption(
+            "No market-wide net-share total is shown because share units are not economically comparable across different companies."
+        )
+
+        table_heading("Major shareholder movements", separated=True)
+        scanner_display = scanner[
+            [
+                "date",
+                "ticker",
+                "owner",
+                "previous_shares",
+                "current_shares",
+                "delta_shares",
+                "previous_pct",
+                "current_pct",
+                "delta_pct_point",
+                "signal",
+                "accounts_changed",
+            ]
+        ].rename(
+            columns={
+                "date": "Date",
+                "ticker": "Ticker",
+                "owner": "Owner",
+                "previous_shares": "Previous Shares",
+                "current_shares": "Current Shares",
+                "delta_shares": "Δ Shares",
+                "previous_pct": "Previous %",
+                "current_pct": "Current %",
+                "delta_pct_point": "Δ pp",
+                "signal": "Signal",
+                "accounts_changed": "Accounts Changed",
+            }
+        )
+        scanner_display["Signal"] = scanner_display["Signal"].map(daily_signal_label)
+        scanner_rows = render_activity_dataframe(
+            scanner_display,
+            f"daily_market_scanner_{scanner_date:%Y%m%d}_{len(scanner)}",
+            {
+                "Date": lambda value: pd.Timestamp(value).strftime("%d %b %Y"),
+                "Previous Shares": "{:,.0f}",
+                "Current Shares": "{:,.0f}",
+                "Δ Shares": signed_shares,
+                "Previous %": "{:.2f}%",
+                "Current %": "{:.2f}%",
+                "Δ pp": signed_points,
+                "Accounts Changed": "{:,.0f}",
+            },
+            ["Δ Shares", "Δ pp"],
+            ["Ticker", "Owner"],
+            selectable=True,
+            max_height=520,
+        )
+
+        if scanner.empty:
+            st.info("No daily >5% movements match the active filters.")
+        else:
+            selected_scanner_index = scanner_rows[0] if scanner_rows else 0
+            drill_row = scanner.iloc[selected_scanner_index]
+            drill_ticker = str(drill_row["ticker"])
+            drill_owner = str(drill_row["owner_normalized"])
+            drill_accounts = date_account_movements[
+                date_account_movements["ticker"].eq(drill_ticker)
+                & date_account_movements["owner_normalized"].eq(drill_owner)
+            ].copy()
+            table_heading(
+                f"{drill_ticker} · {drill_row['owner']} · movement drill-down",
+                separated=True,
+            )
+            render_account_interpretation(drill_row, drill_accounts)
+            drill_chart_column, drill_table_column = st.columns([1.15, 1], gap="small")
+            with drill_chart_column:
+                drill_history = owner_daily_history(
+                    daily_owner_data, daily_movements, drill_ticker, drill_owner
+                )
+                st.plotly_chart(
+                    daily_owner_trend_chart(
+                        drill_history,
+                        "Shares",
+                        f"{drill_row['owner']} · combined ownership",
+                    ),
+                    width="stretch",
+                    config=PLOT_CONFIG,
+                    key=f"scanner_drill_chart_{scanner_date:%Y%m%d}_{drill_ticker}_{drill_owner}",
+                )
+            with drill_table_column:
+                changed_accounts = drill_accounts[
+                    drill_accounts["delta_shares"].abs().gt(.5)
+                ].copy()
+                changed_accounts = changed_accounts.assign(
+                    _magnitude=changed_accounts["delta_shares"].abs()
+                ).sort_values("_magnitude", ascending=False)
+                drill_display = changed_accounts[
+                    ["account_holder", "account_name", "previous_shares", "current_shares", "delta_shares", "direction"]
+                ].rename(
+                    columns={
+                        "account_holder": "Account Holder",
+                        "account_name": "Account Name",
+                        "previous_shares": "Previous",
+                        "current_shares": "Current",
+                        "delta_shares": "Δ Shares",
+                        "direction": "Direction",
+                    }
+                )
+                render_activity_dataframe(
+                    drill_display,
+                    f"scanner_drill_accounts_{scanner_date:%Y%m%d}_{drill_ticker}_{drill_owner}",
+                    {
+                        "Previous": "{:,.0f}",
+                        "Current": "{:,.0f}",
+                        "Δ Shares": signed_shares,
+                    },
+                    ["Δ Shares"],
+                    ["Account Holder", "Account Name"],
+                    max_height=350,
+                )

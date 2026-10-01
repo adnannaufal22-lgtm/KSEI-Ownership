@@ -539,3 +539,59 @@ def scrip_vs_scripless_chart(data: pd.DataFrame, title: str) -> go.Figure:
     figure.update_xaxes(title=None, tickformat="%b-%y")
     figure.update_yaxes(title="Number of shares", tickformat=",.0f")
     return _monthly_ticks(_style(figure, height=350, legend=True), data["date"])
+
+
+def daily_owner_trend_chart(
+    data: pd.DataFrame,
+    metric: str,
+    title: str,
+) -> go.Figure:
+    """Daily >5% beneficial-owner position without mixing account movements."""
+    if data.empty:
+        return _empty("No daily >5% history is available for this owner.", height=350)
+    history = data.sort_values("date").copy()
+    if metric == "Ownership %":
+        value_column = "ownership_pct"
+        axis_title = "Ownership (%)"
+        hover_template = "%{x|%d %b %Y}<br>%{y:,.4f}%<extra></extra>"
+        mode = "line"
+    elif metric == "Daily Δ Shares":
+        value_column = "daily_delta_shares"
+        axis_title = "Daily change in shares"
+        hover_template = "%{x|%d %b %Y}<br>%{y:+,.0f}<extra></extra>"
+        mode = "bar"
+    else:
+        value_column = "shares"
+        axis_title = "Combined investor shares"
+        hover_template = "%{x|%d %b %Y}<br>%{y:,.0f}<extra></extra>"
+        mode = "line"
+
+    values = pd.to_numeric(history[value_column], errors="coerce")
+    figure = go.Figure()
+    if mode == "bar":
+        colors = np.where(values > 0, POSITIVE, np.where(values < 0, NEGATIVE, MUTED))
+        figure.add_bar(
+            x=history["date"],
+            y=values,
+            marker_color=colors,
+            hovertemplate=hover_template,
+            name=metric,
+        )
+        figure.add_hline(y=0, line_width=1, line_color=GRID)
+    else:
+        figure.add_scatter(
+            x=history["date"],
+            y=values,
+            mode="lines+markers",
+            line={"color": "#F5A623", "width": 2},
+            marker={"size": 4, "color": "#F5A623"},
+            hovertemplate=hover_template,
+            name=metric,
+        )
+    figure.update_layout(title=title)
+    figure.update_xaxes(title=None, tickformat="%d %b", tickangle=-35)
+    figure.update_yaxes(
+        title=axis_title,
+        tickformat=",.0f" if metric != "Ownership %" else ".2f",
+    )
+    return _style(figure, height=350, legend=False)

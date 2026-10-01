@@ -4,6 +4,10 @@ __pycache__/
 .pytest_cache/
 .streamlit/secrets.toml
 .vscode/
+.firecrawl/
+.streamlit-test/
+.superdesign/
+BEI_Data/.cache/
 
 # Keep the extracted package as a local backup, not part of the new repository.
 KSEI_Ownership_Dashboard_v7/
@@ -11,4 +15,3 @@ KSEI_Ownership_Dashboard_v7/
 # The dashboard now reads the monthly BEI_Data files directly.
 Summary Ownership.xlsx
 ~$*.xlsx
-
