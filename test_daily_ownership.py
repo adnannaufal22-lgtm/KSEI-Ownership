@@ -12,12 +12,36 @@ from daily_ownership import (
     build_account_position_pivots,
     classify_owner_movement,
     load_daily_ownership_files,
+    normalize_identity,
     parse_ksei_share_value,
     resolve_account_share_values,
 )
 
 
 DATA_DIR = Path(__file__).resolve().parent / "BEI_Data" / "5% Ownership"
+
+
+def test_legal_form_position_uses_one_daily_identity() -> None:
+    assert normalize_identity("PT DELTA ROYAL SEJAHTERA") == "PT DELTA ROYAL SEJAHTERA"
+    assert normalize_identity("DELTA ROYAL SEJAHTERA, PT") == "PT DELTA ROYAL SEJAHTERA"
+    assert normalize_identity("PT. DELTA ROYAL SEJAHTERA") == "PT DELTA ROYAL SEJAHTERA"
+
+
+def test_delta_daily_history_does_not_split_when_pt_moves_to_suffix() -> None:
+    files = [
+        DATA_DIR / "peng-2026-09-21-00078-lima-persen.xlsx",
+        DATA_DIR / "peng-2026-09-22-00079-lima-persen.xlsx",
+    ]
+    owners, accounts, movements, account_movements, quality, metadata = load_daily_ownership_files(files)
+    delta = owners[
+        owners["ticker"].eq("BULL")
+        & owners["date"].eq(pd.Timestamp("2026-09-21"))
+        & owners["owner_normalized"].eq("PT DELTA ROYAL SEJAHTERA")
+    ]
+    assert metadata["parsed_files"] == 2
+    assert len(delta) == 1
+    assert delta.iloc[0]["owner"] == "PT DELTA ROYAL SEJAHTERA"
+    assert delta.iloc[0]["shares"] == 2_251_898_042
 
 
 def test_actual_accumulation_signal() -> None:

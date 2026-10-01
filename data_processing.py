@@ -10,6 +10,8 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+from utils import LEGAL_ENTITY_MARKERS, canonicalize_legal_entity_name
+
 
 STANDARD_COLUMNS = [
     "date",
@@ -65,12 +67,10 @@ def _clean_text(series: pd.Series) -> pd.Series:
     return series.astype("string").str.replace(r"\s+", " ", regex=True).str.strip()
 
 
-LEGAL_ENTITY_MARKERS = {"PT", "CV", "UD", "PD"}
-
-
 def normalize_holder_identity(value: object) -> str:
     """Normalize harmless legal-prefix, punctuation, spacing, and case differences."""
-    text = re.sub(r"[^A-Z0-9]+", " ", str(value).upper()).strip()
+    canonical = canonicalize_legal_entity_name(value)
+    text = re.sub(r"[^A-Z0-9]+", " ", canonical.upper()).strip()
     tokens = text.split()
     while tokens and tokens[0] in LEGAL_ENTITY_MARKERS:
         tokens.pop(0)
@@ -175,7 +175,8 @@ def build_holder_alias_map(data: pd.DataFrame, similarity_threshold: float = 0.9
     alias_map: dict[str, str] = {}
     alias_groups = []
     for group_names in grouped_names.values():
-        canonical = max(group_names, key=representative_score)
+        representative = max(group_names, key=representative_score)
+        canonical = canonicalize_legal_entity_name(representative)
         for name in group_names:
             alias_map[name] = canonical
         if len(group_names) > 1:

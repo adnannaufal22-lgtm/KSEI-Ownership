@@ -1,9 +1,74 @@
 from __future__ import annotations
 
 from io import BytesIO
+import re
 
 import numpy as np
 import pandas as pd
+
+
+LEGAL_ENTITY_MARKERS = {"PT", "CV", "UD", "PD"}
+
+
+def _identity_text(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return re.sub(r"\s+", " ", str(value).replace("\xa0", " ")).strip()
+
+
+def _boundary_legal_marker(tokens: list[str], *, leading: bool) -> tuple[str, int] | None:
+    """Identify PT/CV/UD/PD even when the source spells it as P.T. or C.V."""
+    if not tokens:
+        return None
+    ordered_widths = (1, 2)
+    for width in ordered_widths:
+        if len(tokens) < width:
+            continue
+        boundary = tokens[:width] if leading else tokens[-width:]
+        candidate = "".join(boundary)
+        if candidate in LEGAL_ENTITY_MARKERS:
+            return candidate, width
+    return None
+
+
+def canonicalize_legal_entity_name(value: object) -> str:
+    """Return a stable display name with an Indonesian legal form at the front.
+
+    Examples such as ``PT DELTA ROYAL SEJAHTERA``, ``PT. DELTA ROYAL
+    SEJAHTERA`` and ``DELTA ROYAL SEJAHTERA, PT`` all become
+    ``PT DELTA ROYAL SEJAHTERA``. Non-company names retain their source
+    spelling apart from whitespace cleanup.
+    """
+    cleaned = _identity_text(value)
+    if not cleaned:
+        return ""
+
+    tokens = re.findall(r"[A-Z0-9]+", cleaned.upper())
+    markers: list[str] = []
+    while tokens:
+        match = _boundary_legal_marker(tokens, leading=True)
+        if match is None:
+            break
+        marker, width = match
+        markers.append(marker)
+        del tokens[:width]
+    while tokens:
+        match = _boundary_legal_marker(tokens, leading=False)
+        if match is None:
+            break
+        marker, width = match
+        markers.append(marker)
+        del tokens[-width:]
+
+    if not markers:
+        return cleaned
+    marker = markers[0]
+    return " ".join([marker, *tokens]).strip()
 
 
 def compact_number(value: float | int | None, decimals: int = 2) -> str:

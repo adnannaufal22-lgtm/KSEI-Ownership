@@ -13,6 +13,8 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+from utils import canonicalize_legal_entity_name
+
 
 SIGNAL_ACCUMULATING = "ACCUMULATING"
 SIGNAL_SELLING = "SELLING"
@@ -23,7 +25,7 @@ SIGNAL_EXITED = "EXITED >5%"
 SIGNAL_NEWLY_REPORTED = "NEWLY REPORTED"
 SIGNAL_NO_LONGER_REPORTED = "NO LONGER REPORTED"
 SIGNAL_DATA_ISSUE = "DATA ISSUE"
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 _MONTHS = {
     "JAN": 1,
@@ -194,8 +196,7 @@ def clean_text(value: object) -> str:
 
 def normalize_identity(value: object) -> str:
     """Conservative identity normalization; raw names remain available for audit."""
-    text = clean_text(value).upper()
-    text = re.sub(r"\bPT\s*[\.,]?\s*", "PT ", text)
+    text = canonicalize_legal_entity_name(value).upper()
     text = re.sub(r"[^A-Z0-9]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
@@ -507,7 +508,7 @@ def parse_daily_ownership_file(
         ticker = clean_text(ticker_raw).upper()
         issuer = clean_text(issuer_raw)
         owner_text = clean_text(owner_raw)
-        owner = owner_text or "(MISSING BENEFICIAL OWNER)"
+        owner = canonicalize_legal_entity_name(owner_text) or "(MISSING BENEFICIAL OWNER)"
         owner_normalized = normalize_identity(owner_text) or f"MISSING {path.name} {group_no}"
 
         if not ticker:
@@ -529,8 +530,8 @@ def parse_daily_ownership_file(
             row_index = int(group_indices[position])
             holder_raw = row[fixed["account_holder"]]
             account_name_raw = row[fixed["account_name"]]
-            holder = clean_text(holder_raw)
-            account_name = clean_text(account_name_raw)
+            holder = canonicalize_legal_entity_name(holder_raw)
+            account_name = canonicalize_legal_entity_name(account_name_raw)
             if not holder and not account_name:
                 continue
             key = (normalize_identity(holder), normalize_identity(account_name))
