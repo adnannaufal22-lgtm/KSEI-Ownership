@@ -13,7 +13,11 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-from utils import canonicalize_legal_entity_name
+from utils import (
+    canonicalize_identity_name,
+    normalize_identity_key,
+    personal_qualification_count,
+)
 
 
 SIGNAL_ACCUMULATING = "ACCUMULATING"
@@ -25,7 +29,7 @@ SIGNAL_EXITED = "EXITED >5%"
 SIGNAL_NEWLY_REPORTED = "NEWLY REPORTED"
 SIGNAL_NO_LONGER_REPORTED = "NO LONGER REPORTED"
 SIGNAL_DATA_ISSUE = "DATA ISSUE"
-CACHE_VERSION = 3
+CACHE_VERSION = 4
 
 _MONTHS = {
     "JAN": 1,
@@ -196,9 +200,7 @@ def clean_text(value: object) -> str:
 
 def normalize_identity(value: object) -> str:
     """Conservative identity normalization; raw names remain available for audit."""
-    text = canonicalize_legal_entity_name(value).upper()
-    text = re.sub(r"[^A-Z0-9]+", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    return normalize_identity_key(value)
 
 
 def _compact_text_columns(data: pd.DataFrame) -> pd.DataFrame:
@@ -208,6 +210,42 @@ def _compact_text_columns(data: pd.DataFrame) -> pd.DataFrame:
     for column in COMPACT_TEXT_COLUMNS.intersection(data.columns):
         data[column] = data[column].astype("category")
     return data
+
+
+def _harmonize_identity_labels(
+    frames: list[pd.DataFrame],
+    key_column: str,
+    label_column: str,
+) -> None:
+    """Use one qualified display label for every normalized identity key."""
+    available = [
+        frame[[key_column, label_column]]
+        for frame in frames
+        if not frame.empty and {key_column, label_column}.issubset(frame.columns)
+    ]
+    if not available:
+        return
+    labels = pd.concat(available, ignore_index=True).dropna().drop_duplicates()
+    labels[label_column] = labels[label_column].map(canonicalize_identity_name)
+
+    def label_score(value: object) -> tuple[int, bool, int, str]:
+        label = str(value)
+        return (
+            personal_qualification_count(label),
+            label == label.upper(),
+            len(label),
+            label,
+        )
+
+    display_map = {
+        str(identity_key): max(group[label_column].astype(str), key=label_score)
+        for identity_key, group in labels.groupby(key_column, dropna=False, sort=False)
+    }
+    for frame in frames:
+        if frame.empty or not {key_column, label_column}.issubset(frame.columns):
+            continue
+        canonical = frame[key_column].astype(str).map(display_map)
+        frame[label_column] = canonical.where(canonical.notna(), frame[label_column])
 
 
 def parse_ksei_share_value(value: object) -> int | float:
@@ -508,7 +546,7 @@ def parse_daily_ownership_file(
         ticker = clean_text(ticker_raw).upper()
         issuer = clean_text(issuer_raw)
         owner_text = clean_text(owner_raw)
-        owner = canonicalize_legal_entity_name(owner_text) or "(MISSING BENEFICIAL OWNER)"
+        owner = canonicalize_identity_name(owner_text) or "(MISSING BENEFICIAL OWNER)"
         owner_normalized = normalize_identity(owner_text) or f"MISSING {path.name} {group_no}"
 
         if not ticker:
@@ -530,8 +568,8 @@ def parse_daily_ownership_file(
             row_index = int(group_indices[position])
             holder_raw = row[fixed["account_holder"]]
             account_name_raw = row[fixed["account_name"]]
-            holder = canonicalize_legal_entity_name(holder_raw)
-            account_name = canonicalize_legal_entity_name(account_name_raw)
+            holder = canonicalize_identity_name(holder_raw)
+            account_name = canonicalize_identity_name(account_name_raw)
             if not holder and not account_name:
                 continue
             key = (normalize_identity(holder), normalize_identity(account_name))
@@ -890,7 +928,14 @@ def load_daily_ownership_files(
                 try:
                     with gzip.open(file_cache, "rb") as handle:
                         parsed = pickle.load(handle)
-                except (OSError, EOFError, pickle.PickleError, AttributeError, ValueError):
+                except (
+                    OSError,
+                    EOFError,
+                    pickle.PickleError,
+                    AttributeError,
+                    ImportError,
+                    ValueError,
+                ):
                     parsed = None
         try:
             if parsed is None:
@@ -925,6 +970,22 @@ def load_daily_ownership_files(
     accounts = pd.concat(account_frames, ignore_index=True) if account_frames else pd.DataFrame(columns=ACCOUNT_COLUMNS)
     movements = pd.concat(movement_frames, ignore_index=True) if movement_frames else pd.DataFrame(columns=MOVEMENT_COLUMNS)
     account_movements = pd.concat(account_movement_frames, ignore_index=True) if account_movement_frames else pd.DataFrame(columns=ACCOUNT_MOVEMENT_COLUMNS)
+
+    _harmonize_identity_labels(
+        [owners, accounts, movements, account_movements],
+        "owner_normalized",
+        "owner",
+    )
+    _harmonize_identity_labels(
+        [accounts, account_movements],
+        "account_holder_normalized",
+        "account_holder",
+    )
+    _harmonize_identity_labels(
+        [accounts, account_movements],
+        "account_name_normalized",
+        "account_name",
+    )
 
     owners = _aggregate_owner_observations(owners)
     movements = _aggregate_owner_movements(movements)

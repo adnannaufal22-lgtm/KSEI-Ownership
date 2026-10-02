@@ -10,7 +10,12 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-from utils import LEGAL_ENTITY_MARKERS, canonicalize_legal_entity_name
+from utils import (
+    LEGAL_ENTITY_MARKERS,
+    canonicalize_identity_name,
+    normalize_identity_key,
+    personal_qualification_count,
+)
 
 
 STANDARD_COLUMNS = [
@@ -69,8 +74,7 @@ def _clean_text(series: pd.Series) -> pd.Series:
 
 def normalize_holder_identity(value: object) -> str:
     """Normalize harmless legal-prefix, punctuation, spacing, and case differences."""
-    canonical = canonicalize_legal_entity_name(value)
-    text = re.sub(r"[^A-Z0-9]+", " ", canonical.upper()).strip()
+    text = normalize_identity_key(value)
     tokens = text.split()
     while tokens and tokens[0] in LEGAL_ENTITY_MARKERS:
         tokens.pop(0)
@@ -164,6 +168,7 @@ def build_holder_alias_map(data: pd.DataFrame, similarity_threshold: float = 0.9
         cleaned = re.sub(r"\s+", " ", name).strip()
         leading_legal_name = bool(re.match(r"^(PT|CV|UD|PD)(?:\.|\s)", cleaned, flags=re.IGNORECASE))
         return (
+            personal_qualification_count(name),
             pd.Timestamp(stats["last_seen"]),
             int(stats["observations"]),
             int(stats["stocks"]),
@@ -176,7 +181,7 @@ def build_holder_alias_map(data: pd.DataFrame, similarity_threshold: float = 0.9
     alias_groups = []
     for group_names in grouped_names.values():
         representative = max(group_names, key=representative_score)
-        canonical = canonicalize_legal_entity_name(representative)
+        canonical = canonicalize_identity_name(representative)
         for name in group_names:
             alias_map[name] = canonical
         if len(group_names) > 1:

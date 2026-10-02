@@ -44,6 +44,31 @@ def test_delta_daily_history_does_not_split_when_pt_moves_to_suffix() -> None:
     assert delta.iloc[0]["shares"] == 2_251_898_042
 
 
+def test_personal_title_reordering_does_not_split_daily_history() -> None:
+    files = [
+        DATA_DIR / "peng-2026-08-31-00063-lima-persen.xlsx",
+        DATA_DIR / "peng-2026-09-01-00064-lima-persen.xlsx",
+    ]
+    owners, accounts, movements, account_movements, quality, metadata = load_daily_ownership_files(files)
+    identity_key = "GAFUR SULISTYO UMAR"
+    gafur = owners[
+        owners["ticker"].eq("OASA")
+        & owners["date"].eq(pd.Timestamp("2026-08-31"))
+        & owners["owner_normalized"].eq(identity_key)
+    ]
+    latest_movement = movements[
+        movements["ticker"].eq("OASA")
+        & movements["date"].eq(pd.Timestamp("2026-09-01"))
+        & movements["owner_normalized"].eq(identity_key)
+    ]
+    assert metadata["parsed_files"] == 2
+    assert len(gafur) == 1
+    assert gafur.iloc[0]["owner"] == "IR GAFUR SULISTYO UMAR MBA"
+    assert gafur.iloc[0]["shares"] == 2_066_136_693
+    assert len(latest_movement) == 1
+    assert latest_movement.iloc[0]["signal"] == SIGNAL_UNCHANGED
+
+
 def test_actual_accumulation_signal() -> None:
     assert classify_owner_movement(100_000_000, 125_000_000, 5.2, 6.1, True) == SIGNAL_ACCUMULATING
 

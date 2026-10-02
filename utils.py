@@ -8,6 +8,69 @@ import pandas as pd
 
 
 LEGAL_ENTITY_MARKERS = {"PT", "CV", "UD", "PD"}
+PERSON_PREFIX_TITLES = (
+    "PROF",
+    "DR",
+    "DRS",
+    "DRA",
+    "IR",
+    "KH",
+    "HJ",
+    "H",
+)
+PERSON_SUFFIX_CREDENTIALS = (
+    "APTH",
+    "SKH",
+    "SPOG",
+    "SPM",
+    "DTH",
+    "MKOM",
+    "MSI",
+    "MSC",
+    "MBA",
+    "BSC",
+    "ACPA",
+    "CPA",
+    "CFA",
+    "CMA",
+    "SAK",
+    "SIP",
+    "SSOS",
+    "MAK",
+    "MKN",
+    "BBA",
+    "SE",
+    "SH",
+    "ST",
+    "AK",
+    "CA",
+    "CN",
+    "BA",
+    "MS",
+    "ME",
+    "MM",
+    "MH",
+    "MT",
+)
+CORPORATE_IDENTITY_HINTS = {
+    "BANK",
+    "CAPITAL",
+    "COMPANY",
+    "CORP",
+    "CORPORATION",
+    "FUND",
+    "HOLDING",
+    "HOLDINGS",
+    "INC",
+    "INSURANCE",
+    "INVESTMENT",
+    "INVESTMENTS",
+    "LIMITED",
+    "LTD",
+    "MANAGEMENT",
+    "SECURITIES",
+    "TRUST",
+}
 
 
 def _identity_text(value: object) -> str:
@@ -34,6 +97,64 @@ def _boundary_legal_marker(tokens: list[str], *, leading: bool) -> tuple[str, in
         if candidate in LEGAL_ENTITY_MARKERS:
             return candidate, width
     return None
+
+
+def _boundary_affix(
+    tokens: list[str],
+    allowed: set[str],
+    *,
+    leading: bool,
+) -> tuple[str, int] | None:
+    """Read compact or dotted identity affixes such as MBA, M.B.A., or S.K.H."""
+    for width in range(min(4, len(tokens)), 0, -1):
+        boundary = tokens[:width] if leading else tokens[-width:]
+        candidate = "".join(boundary)
+        if candidate in allowed:
+            return candidate, width
+    return None
+
+
+def _personal_identity_parts(
+    value: object,
+) -> tuple[list[str], list[str], list[str]] | None:
+    """Return canonical prefix titles, base-name tokens, and suffix credentials."""
+    cleaned = _identity_text(value)
+    tokens = re.findall(r"[A-Z0-9]+", cleaned.upper())
+    if len(tokens) < 2 or _boundary_legal_marker(tokens, leading=True) or _boundary_legal_marker(tokens, leading=False):
+        return None
+
+    prefix_set = set(PERSON_PREFIX_TITLES)
+    suffix_set = set(PERSON_SUFFIX_CREDENTIALS)
+    trailing_set = prefix_set | suffix_set
+    prefixes: list[str] = []
+    suffixes: list[str] = []
+
+    while tokens:
+        match = _boundary_affix(tokens, prefix_set, leading=True)
+        if match is None:
+            break
+        title, width = match
+        prefixes.append(title)
+        del tokens[:width]
+    while tokens:
+        match = _boundary_affix(tokens, trailing_set, leading=False)
+        if match is None:
+            break
+        affix, width = match
+        if affix in prefix_set:
+            prefixes.append(affix)
+        else:
+            suffixes.append(affix)
+        del tokens[-width:]
+
+    if not prefixes and not suffixes:
+        return None
+    if len(tokens) < 2 or CORPORATE_IDENTITY_HINTS.intersection(tokens):
+        return None
+
+    canonical_prefixes = [title for title in PERSON_PREFIX_TITLES if title in set(prefixes)]
+    canonical_suffixes = [title for title in PERSON_SUFFIX_CREDENTIALS if title in set(suffixes)]
+    return canonical_prefixes, tokens, canonical_suffixes
 
 
 def canonicalize_legal_entity_name(value: object) -> str:
@@ -69,6 +190,40 @@ def canonicalize_legal_entity_name(value: object) -> str:
         return cleaned
     marker = markers[0]
     return " ".join([marker, *tokens]).strip()
+
+
+def canonicalize_identity_name(value: object) -> str:
+    """Canonicalize company legal forms and personal title placement."""
+    company_name = canonicalize_legal_entity_name(value)
+    company_tokens = re.findall(r"[A-Z0-9]+", company_name.upper())
+    if company_tokens and company_tokens[0] in LEGAL_ENTITY_MARKERS:
+        return company_name
+
+    parts = _personal_identity_parts(value)
+    if parts is None:
+        return company_name
+    prefixes, base_tokens, suffixes = parts
+    return " ".join([*prefixes, *base_tokens, *suffixes])
+
+
+def normalize_identity_key(value: object) -> str:
+    """Return a stable identity key, excluding harmless personal qualifications."""
+    canonical = canonicalize_identity_name(value)
+    tokens = re.findall(r"[A-Z0-9]+", canonical.upper())
+    parts = _personal_identity_parts(canonical)
+    if parts is not None:
+        _, base_tokens, _ = parts
+        tokens = base_tokens
+    return " ".join(tokens)
+
+
+def personal_qualification_count(value: object) -> int:
+    """Count recognized personal titles/credentials for canonical-label scoring."""
+    parts = _personal_identity_parts(value)
+    if parts is None:
+        return 0
+    prefixes, _, suffixes = parts
+    return len(prefixes) + len(suffixes)
 
 
 def compact_number(value: float | int | None, decimals: int = 2) -> str:

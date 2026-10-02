@@ -43,7 +43,7 @@ The dashboard automatically:
 - detects BEI header rows even when their position changes;
 - discovers future `.xlsx` or `.xlsm` files in all four folders;
 - skips malformed or empty files in the running app while logging the issue;
-- consolidates high-confidence holder aliases using legal-name normalization and exact adjacent-period share continuity, including prefix/suffix variants such as `PT NAME` and `NAME, PT`;
+- consolidates high-confidence holder aliases using legal-name normalization and exact adjacent-period share continuity, including company variants such as `PT NAME`/`NAME, PT` and personal-title variants such as `IR NAME MBA`/`NAME, IR, MBA`;
 - keeps missing observations blank instead of turning them into zero;
 - formats displayed share values with comma separators;
 - shades monthly pivot cells light green, yellow, or red for increases, no change, or decreases;
