@@ -7,20 +7,20 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-DOMESTIC = "#00C781"
-FOREIGN = "#3182F6"
-POSITIVE = "#00C781"
-NEGATIVE = "#FF5A52"
-NAVY = "#F1F5F9"
-MUTED = "#8998A8"
-GRID = "#25303B"
-PANEL = "#0E151D"
+DOMESTIC = "#45B820"
+FOREIGN = "#4D75D7"
+POSITIVE = "#2FA84F"
+NEGATIVE = "#D65C5C"
+NAVY = "#17201D"
+MUTED = "#7B847F"
+GRID = "#E3E7E3"
+PANEL = "#FFFFFF"
 
 CATEGORY_COLORS = [
-    "#F5A623", "#3182F6", "#00C781", "#A78BFA", "#FF5A52",
-    "#22D3EE", "#F472B6", "#A3E635", "#94A3B8", "#FBBF24",
-    "#60A5FA", "#818CF8", "#34D399", "#E879F9", "#FB923C",
-    "#67E8F9", "#FB7185", "#BEF264", "#CBD5E1", "#FDE047",
+    "#59CE2A", "#4D75D7", "#F0A645", "#8B6EC8", "#D65C5C",
+    "#2F9E9B", "#C46C9D", "#82A43B", "#718096", "#D8B647",
+    "#6F95D8", "#726FD0", "#55A879", "#B47AB3", "#C98149",
+    "#5AA8AE", "#C87373", "#9AB55C", "#98A39E", "#C9A94C",
 ]
 
 
@@ -34,12 +34,12 @@ def _empty(message: str, height: int = 300) -> go.Figure:
 def _style(figure: go.Figure, height: int = 320, legend: bool = True) -> go.Figure:
     figure.update_layout(
         height=height,
-        margin={"l": 6, "r": 8, "t": 30, "b": 8},
+        margin={"l": 10, "r": 12, "t": 34, "b": 12},
         paper_bgcolor=PANEL,
         plot_bgcolor=PANEL,
         font={"family": "Inter, IBM Plex Sans, Segoe UI, sans-serif", "color": NAVY, "size": 10},
         title={"x": 0.012, "xanchor": "left", "y": 0.985, "yanchor": "top", "font": {"size": 12, "color": NAVY}},
-        hoverlabel={"bgcolor": "#080D12", "font_color": NAVY, "bordercolor": GRID, "font_size": 10},
+        hoverlabel={"bgcolor": "#17201D", "font_color": "#FFFFFF", "bordercolor": "#17201D", "font_size": 10},
         hovermode="x unified",
         legend={
             "orientation": "h",
@@ -50,7 +50,7 @@ def _style(figure: go.Figure, height: int = 320, legend: bool = True) -> go.Figu
             "font": {"size": 9.5},
             "title": {"text": ""},
             "itemsizing": "constant",
-            "bgcolor": "rgba(0,0,0,0)",
+            "bgcolor": "rgba(255,255,255,0)",
         },
         showlegend=legend,
         bargap=0.24,
@@ -58,13 +58,13 @@ def _style(figure: go.Figure, height: int = 320, legend: bool = True) -> go.Figu
     figure.update_xaxes(
         showgrid=True, gridcolor=GRID, gridwidth=.5, zeroline=False, linecolor=GRID,
         tickfont={"family": "IBM Plex Mono, Roboto Mono, monospace", "color": MUTED, "size": 9},
-        automargin=True, title_font={"size": 9}, showspikes=True, spikecolor=MUTED,
+        automargin=True, title_font={"size": 9}, showspikes=True, spikecolor="#A8B0A4",
         spikethickness=1, spikedash="dot", spikemode="across",
     )
     figure.update_yaxes(
         gridcolor=GRID, gridwidth=.5, zeroline=False,
         tickfont={"family": "IBM Plex Mono, Roboto Mono, monospace", "color": MUTED, "size": 9},
-        automargin=True, title_font={"size": 9}, showspikes=True, spikecolor=MUTED,
+        automargin=True, title_font={"size": 9}, showspikes=True, spikecolor="#A8B0A4",
         spikethickness=1, spikedash="dot", spikemode="across",
     )
     return figure
@@ -92,7 +92,7 @@ def trend_chart(data: pd.DataFrame, mode: str) -> go.Figure:
         grouped["period_change"] = grouped["ownership_units"].diff()
         figure = px.line(grouped, x="date", y="ownership_units", markers=True)
         figure.update_traces(
-            line={"color": "#F5A623", "width": 2}, marker={"size": 4},
+            line={"color": "#59CE2A", "width": 2.5}, marker={"size": 4},
             customdata=grouped[["period_change"]],
             hovertemplate="%{x|%d %b %Y}<br>Reported shares: %{y:,.0f}<br>Period change: %{customdata[0]:+,.0f}<extra></extra>",
         )
@@ -110,7 +110,7 @@ def trend_chart(data: pd.DataFrame, mode: str) -> go.Figure:
             grouped = grouped.groupby(["date", dimension], as_index=False)["ownership_pct"].sum()
         totals = grouped.groupby("date")["ownership_pct"].transform("sum")
         grouped["share"] = np.where(totals.ne(0), grouped["ownership_pct"] / totals * 100, 0)
-        color_map = {"Domestic": DOMESTIC, "Foreign": FOREIGN, "Institutional": "#F5A623", "Individual": "#FF5A52", "Unclassified": "#94A3B8"}
+        color_map = {"Domestic": DOMESTIC, "Foreign": FOREIGN, "Institutional": "#59CE2A", "Individual": "#D65C5C", "Unclassified": "#98A39E"}
         figure = px.area(
             grouped, x="date", y="share", color=dimension,
             color_discrete_map=color_map,
@@ -262,7 +262,7 @@ def monthly_movement_chart(monthly: pd.DataFrame, title: str, metric: str) -> go
             y=monthly[value_column],
             name=value_label,
             mode="lines+markers",
-            line={"color": "#F5A623", "width": 2},
+            line={"color": "#59CE2A", "width": 2.5},
             marker={"size": 4},
             customdata=monthly[[change_column, "change_pct", "stake_points", "counterparties"]],
             hovertemplate=(
@@ -511,7 +511,7 @@ def scrip_vs_scripless_chart(data: pd.DataFrame, title: str) -> go.Figure:
     denominator = view["number_of_shares"].where(view["number_of_shares"].gt(0))
     view["ownership_pct"] = view["ownership_units"] / denominator * 100
     order = ["Scripless shares", "Scrip shares"]
-    colors = {"Scripless shares": FOREIGN, "Scrip shares": "#8998A8"}
+    colors = {"Scripless shares": FOREIGN, "Scrip shares": "#A8B0A4"}
 
     figure = go.Figure()
     for label in order:
@@ -583,8 +583,8 @@ def daily_owner_trend_chart(
             x=history["date"],
             y=values,
             mode="lines+markers",
-            line={"color": "#F5A623", "width": 2},
-            marker={"size": 4, "color": "#F5A623"},
+            line={"color": "#59CE2A", "width": 2.5},
+            marker={"size": 4, "color": "#59CE2A"},
             hovertemplate=hover_template,
             name=metric,
         )
@@ -595,3 +595,49 @@ def daily_owner_trend_chart(
         tickformat=",.0f" if metric != "Ownership %" else ".2f",
     )
     return _style(figure, height=350, legend=False)
+
+
+def market_activity_chart(data: pd.DataFrame) -> go.Figure:
+    """Plot daily beneficial-owner signal counts for the market overview."""
+    if data.empty or "date" not in data or "signal" not in data:
+        return _empty("No daily >5% activity is available.", height=285)
+    activity = (
+        data.groupby(["date", "signal"], observed=True)
+        .size()
+        .rename("events")
+        .reset_index()
+    )
+    preferred = ["ACCUMULATING", "SELLING", "INTERNAL TRANSFER", "ENTERED >5%", "EXITED >5%"]
+    labels = {
+        "ACCUMULATING": "Accumulating",
+        "SELLING": "Selling",
+        "INTERNAL TRANSFER": "Internal transfer",
+        "ENTERED >5%": "Entered >5%",
+        "EXITED >5%": "Exited >5%",
+        "UNCHANGED": "Unchanged",
+    }
+    colors = {
+        "ACCUMULATING": POSITIVE,
+        "SELLING": NEGATIVE,
+        "INTERNAL TRANSFER": "#C78731",
+        "ENTERED >5%": "#59CE2A",
+        "EXITED >5%": "#B56B6B",
+        "UNCHANGED": "#A8B0A4",
+    }
+    figure = go.Figure()
+    signals = [signal for signal in preferred if signal in set(activity["signal"])]
+    signals += sorted(set(activity["signal"]) - set(signals) - {"UNCHANGED"})
+    for signal in signals:
+        view = activity[activity["signal"].eq(signal)]
+        figure.add_scatter(
+            x=view["date"],
+            y=view["events"],
+            mode="lines",
+            name=labels.get(signal, str(signal).replace("_", " ").title()),
+            line={"color": colors.get(signal, MUTED), "width": 2.2},
+            hovertemplate="%{x|%d %b %Y}<br>%{fullData.name}: %{y:,.0f}<extra></extra>",
+        )
+    figure.update_layout(title="Daily >5% ownership activity")
+    figure.update_xaxes(title=None, tickformat="%d %b")
+    figure.update_yaxes(title="Reported signals", rangemode="tozero", dtick=1)
+    return _style(figure, height=285, legend=True)

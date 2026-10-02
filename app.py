@@ -11,6 +11,7 @@ import streamlit as st
 
 from charts import (
     daily_owner_trend_chart,
+    market_activity_chart,
     movement_breakdown_chart,
     monthly_movement_chart,
     ownership_movement_lines,
@@ -66,9 +67,9 @@ LOGGER = logging.getLogger("ksei_dashboard")
 
 st.set_page_config(
     page_title="KSEI Ownership Dashboard",
-    page_icon="ℹ️",
+    page_icon="📊",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 st.markdown(
     f"<style>{(APP_DIR / 'styles.css').read_text(encoding='utf-8')}</style>",
@@ -300,11 +301,11 @@ def render_pivot(
             return ""
         numeric = float(value)
         if abs(numeric) <= 1e-9:
-            return "background-color:rgba(245,166,35,.075);color:#8998A8;"
+            return "background-color:rgba(168,176,164,.10);color:#7B847F;"
         ratio = min(abs(numeric) / heatmap_scale, 1.0) if heatmap_scale else 0.0
         opacity = 0.07 + 0.16 * ratio**0.5
-        rgb = "0,199,129" if numeric > 0 else "255,90,82"
-        color = "#00C781" if numeric > 0 else "#FF5A52"
+        rgb = "47,168,79" if numeric > 0 else "214,92,92"
+        color = "#2FA84F" if numeric > 0 else "#D65C5C"
         return f"background-color:rgba({rgb},{opacity:.3f});color:{color};"
 
     header_columns = [row_label, *value_columns]
@@ -555,15 +556,98 @@ def render_dashboard_masthead(
     )
 
 
+def render_page_header(
+    eyebrow: str,
+    title: str,
+    subtitle: str,
+    latest_period: object,
+) -> None:
+    """Render the shared compact page header for the presentation layer."""
+    st.markdown(
+        '<div class="page-header">'
+        '<div class="page-header-copy">'
+        f'<span>{escape(eyebrow)}</span>'
+        f'<h1>{escape(title)}</h1>'
+        f'<p>{escape(subtitle)}</p>'
+        '</div>'
+        '<div class="page-header-tools">'
+        '<span class="live-dot"></span>'
+        f'<div><small>LATEST DATA</small><strong>{escape(str(latest_period))}</strong></div>'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_market_kpis(daily_movements: pd.DataFrame) -> None:
+    """Summarize the latest daily >5% signal snapshot without changing it."""
+    if daily_movements.empty or "date" not in daily_movements:
+        return
+    latest_date = pd.Timestamp(daily_movements["date"].max())
+    latest = daily_movements[daily_movements["date"].eq(latest_date)].copy()
+    change = pd.to_numeric(latest.get("delta_shares"), errors="coerce").fillna(0)
+    cards = [
+        ("ACCUMULATING", int(latest["signal"].eq(SIGNAL_ACCUMULATING).sum()), "positive", "↑"),
+        ("SELLING", int(latest["signal"].eq(SIGNAL_SELLING).sum()), "negative", "↓"),
+        ("INTERNAL TRANSFER", int(latest["signal"].eq(SIGNAL_INTERNAL_TRANSFER).sum()), "transfer", "⇄"),
+        ("ENTERED >5%", int(latest["signal"].eq(SIGNAL_ENTERED).sum()), "positive", "+"),
+        ("EXITED >5%", int(latest["signal"].eq(SIGNAL_EXITED).sum()), "negative", "−"),
+        ("NET REPORTED Δ", terminal_number(change.sum()), "neutral", "Δ"),
+    ]
+    card_html = "".join(
+        '<div class="market-kpi">'
+        f'<span class="kpi-icon {css_class}">{icon}</span>'
+        f'<div><small>{escape(label)}</small><strong class="{css_class}">{escape(str(value))}</strong></div>'
+        '</div>'
+        for label, value, css_class, icon in cards
+    )
+    st.markdown(
+        f'<div class="market-kpi-grid">{card_html}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_signal_summary(daily_movements: pd.DataFrame) -> None:
+    if daily_movements.empty:
+        st.info("No daily >5% signal data is available.")
+        return
+    latest_date = pd.Timestamp(daily_movements["date"].max())
+    latest = daily_movements[daily_movements["date"].eq(latest_date)].copy()
+    rows = [
+        ("Accumulating", SIGNAL_ACCUMULATING, "positive"),
+        ("Selling", SIGNAL_SELLING, "negative"),
+        ("Internal transfer", SIGNAL_INTERNAL_TRANSFER, "transfer"),
+        ("Entered >5%", SIGNAL_ENTERED, "positive"),
+        ("Exited >5%", SIGNAL_EXITED, "negative"),
+    ]
+    total = max(len(latest), 1)
+    row_html = "".join(
+        '<div class="signal-summary-row">'
+        f'<span><i class="{css_class}"></i>{escape(label)}</span>'
+        f'<strong>{int(latest["signal"].eq(signal).sum()):,}</strong>'
+        f'<small>{latest["signal"].eq(signal).sum() / total:.0%}</small>'
+        '</div>'
+        for label, signal, css_class in rows
+    )
+    st.markdown(
+        '<div class="signal-summary-card">'
+        '<div class="card-title"><span>SIGNAL MIX</span>'
+        f'<small>{latest_date:%d %b %Y}</small></div>'
+        f'{row_html}'
+        '<p>Owner signals use combined beneficial ownership. Account transfers remain separate.</p>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def movement_cell_style(value: object) -> str:
     if pd.isna(value):
-        return "color:#8998A8;"
+        return "color:#7B847F;"
     numeric = float(value)
     if numeric > 1e-9:
-        return "color:#00C781;background-color:rgba(0,199,129,.075);"
+        return "color:#2FA84F;background-color:rgba(47,168,79,.08);"
     if numeric < -1e-9:
-        return "color:#FF5A52;background-color:rgba(255,90,82,.075);"
-    return "color:#8998A8;"
+        return "color:#D65C5C;background-color:rgba(214,92,92,.08);"
+    return "color:#7B847F;"
 
 
 def render_activity_dataframe(
@@ -588,7 +672,7 @@ def render_activity_dataframe(
         if column in view:
             styled = styled.set_properties(
                 subset=[column],
-                **{"color": "#3182F6", "font-weight": "650"},
+                **{"color": "#4D75D7", "font-weight": "650"},
             )
     height = min(max_height, 39 + 35 * len(view))
     if selectable:
@@ -641,15 +725,15 @@ def render_account_pivot(
         [
             {
                 "selector": "th.col_heading.level0",
-                "props": "color:#F5A623;font-weight:750;border-bottom:1px solid #25303B;",
+                "props": "color:#17201D;font-weight:750;border-bottom:1px solid #E3E7E3;",
             },
             {
                 "selector": "th.col_heading.level1",
-                "props": "color:#8998A8;font-weight:650;",
+                "props": "color:#7B847F;font-weight:650;",
             },
             {
                 "selector": "th.row_heading",
-                "props": "color:#F1F5F9;font-weight:650;",
+                "props": "color:#17201D;font-weight:650;",
             },
         ],
         overwrite=False,
@@ -971,15 +1055,6 @@ if holder_link_target:
         st.session_state["selected_owner"] = holder_link_target
     st.query_params.clear()
 
-st.markdown(
-    '<div class="dashboard-brandbar">'
-    '<span class="dashboard-wordmark">KSEI</span>'
-    '<span>OWNERSHIP DASHBOARD</span>'
-    '<em>INDONESIA CAPITAL MARKET MONITOR</em>'
-    '</div>',
-    unsafe_allow_html=True,
-)
-
 top_navigation = [
     "Overview",
     "1% Ownership",
@@ -988,15 +1063,92 @@ top_navigation = [
     "Type",
     "Entity Movement",
 ]
+page_query = str(st.query_params.get("page", "")).strip().lower()
+page_deep_links = {
+    "overview": "Overview",
+    "1pct": "1% Ownership",
+    "5pct": "5% Ownership",
+    "classification": "Classification",
+    "type": "Type",
+    "entity": "Entity Movement",
+}
+if (
+    page_query in page_deep_links
+    and st.session_state.get("_page_query_applied") != page_query
+):
+    st.session_state["top_navigation"] = page_deep_links[page_query]
+    st.session_state["_page_query_applied"] = page_query
 if st.session_state.get("top_navigation") not in top_navigation:
     st.session_state["top_navigation"] = "Overview"
-active_page = st.radio(
-    "Primary navigation",
-    top_navigation,
-    horizontal=True,
-    label_visibility="collapsed",
-    key="top_navigation",
-)
+all_source_dates = [
+    pd.Timestamp(value)
+    for frame in (ownership_data, classification_data, type_data, daily_owner_data)
+    if not frame.empty and "date" in frame
+    for value in frame["date"].dropna().unique()
+]
+global_latest = max(all_source_dates).strftime("%d %b %Y").upper() if all_source_dates else "—"
+
+with st.sidebar:
+    st.markdown(
+        '<div class="sidebar-brand">'
+        '<div class="brand-mark">K</div>'
+        '<div><strong>KSEI</strong><span>OWNERSHIP INTELLIGENCE</span></div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    active_page = st.radio(
+        "Workspace navigation",
+        top_navigation,
+        label_visibility="collapsed",
+        key="top_navigation",
+    )
+    st.markdown(
+        '<div class="sidebar-data-card">'
+        '<span>DATA COVERAGE</span>'
+        '<div class="sidebar-source-grid">'
+        f'<span>Ownership</span><strong>{int(ownership_metadata.get("source_files", 0))}</strong>'
+        f'<span>Classification</span><strong>{int(classification_metadata.get("source_files", 0))}</strong>'
+        f'<span>Type</span><strong>{int(type_metadata.get("source_files", 0))}</strong>'
+        f'<span>Daily 5%</span><strong>{int(daily_metadata.get("parsed_files", 0))}</strong>'
+        f'<span>Latest</span><strong>{escape(global_latest)}</strong>'
+        '</div>'
+        '<div class="sidebar-status"><span></span>CONNECTED</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+global_search_options = [f"S|{ticker}" for ticker in stock_options] + [
+    f"O|{owner}" for owner in owner_options
+]
+global_search_column = st.columns([4.8, 1.65], gap="small")[1]
+with global_search_column:
+    global_search = st.selectbox(
+        "Global Search",
+        global_search_options,
+        index=None,
+        placeholder="Search ticker or owner…",
+        format_func=lambda value: (
+            f"{value[2:]} · {stock_names.get(value[2:], '')}".rstrip(" ·")
+            if value.startswith("S|")
+            else f"Owner · {value[2:]}"
+        ),
+        key="global_entity_search",
+        label_visibility="collapsed",
+    )
+if global_search and st.session_state.get("global_search_applied") != global_search:
+    search_kind, search_value = global_search.split("|", 1)
+    st.session_state["global_search_applied"] = global_search
+    if search_kind == "S":
+        st.session_state["selected_stock"] = search_value
+        st.session_state["top_navigation"] = (
+            "1% Ownership" if search_value in set(ownership_data["ticker"].dropna().astype(str))
+            else "5% Ownership"
+        )
+    else:
+        st.session_state["selected_owner"] = search_value
+        st.session_state["analysis_mode"] = "Owner"
+        st.session_state["top_navigation"] = "Entity Movement"
+    st.rerun()
 
 overview_section = ""
 if active_page == "Overview":
@@ -1007,15 +1159,23 @@ if active_page == "Overview":
         for value in frame["date"].dropna().unique()
     ]
     market_latest = max(market_dates).strftime("%d-%b-%y").upper() if market_dates else "—"
-    render_dashboard_masthead(
-        "Market",
-        "Overview",
-        ownership_metadata,
-        classification_metadata,
-        type_metadata,
-        daily_metadata,
+    render_page_header(
+        "MARKET OVERVIEW",
+        "Ownership Intelligence",
+        "Monitor reported ownership changes, threshold events, and account-level transfers across the Indonesian market.",
         market_latest,
     )
+    render_market_kpis(daily_movements)
+    overview_chart_column, overview_signal_column = st.columns([2.45, 1], gap="small")
+    with overview_chart_column:
+        st.plotly_chart(
+            market_activity_chart(daily_movements),
+            width="stretch",
+            config=PLOT_CONFIG,
+            key="overview_market_activity",
+        )
+    with overview_signal_column:
+        render_signal_summary(daily_movements)
     overview_section = st.radio(
         "Overview dataset",
         ["1% Monthly Changes", "5% Daily Movement"],
@@ -1062,16 +1222,6 @@ else:
             )
 
     active_metrics = selection_metrics(ownership_data, analyze_by, selected_entity)
-    render_dashboard_masthead(
-        analyze_by,
-        selected_entity,
-        ownership_metadata,
-        classification_metadata,
-        type_metadata,
-        daily_metadata,
-        active_metrics["latest_period"],
-    )
-
     if analyze_by == "Stock":
         context_name = f"{selected_entity} · {stock_names.get(selected_entity, '')}".rstrip(" ·")
         available_dates = pd.concat(
@@ -1094,6 +1244,12 @@ else:
     )
     identity_code = selected_entity if analyze_by == "Stock" else "OWNER"
     identity_name = stock_names.get(selected_entity, "") if analyze_by == "Stock" else selected_entity
+    render_page_header(
+        active_page.upper(),
+        context_name,
+        f"{analyze_by} view · {coverage_label}",
+        active_metrics["latest_period"],
+    )
     render_terminal_header(identity_code, identity_name, analyze_by, active_metrics)
 
 
@@ -1186,18 +1342,30 @@ if active_page == "5% Ownership":
         f"{selected_entity} · beneficial-owner and securities-account monitoring",
         "WHO changed ownership is measured from combined beneficial ownership; WHERE shares moved is shown separately by securities account.",
     )
-    owner_subtab, position_subtab, account_movement_subtab = st.tabs(
+    requested_daily_subtab = str(st.query_params.get("subtab", "")).strip().lower()
+    daily_subtab_default = {
+        "beneficial": "Beneficial Owner",
+        "latest": "Latest Account Position",
+        "account": "Account Movement",
+        "daily": "Daily >5% Movement",
+    }.get(requested_daily_subtab, "Beneficial Owner")
+    owner_subtab, position_subtab, account_movement_subtab, daily_scanner_subtab = st.tabs(
         [
             "Beneficial Owner",
             "Latest Account Position",
             "Account Movement",
-        ]
+            "Daily >5% Movement",
+        ],
+        default=daily_subtab_default,
+        key="daily_ownership_subtabs",
     )
     if daily_owner_data.empty or daily_movements.empty:
         with owner_subtab:
             st.info(
                 "No daily >5% ownership data is available. Add KSEI files to BEI_Data/5% Ownership."
             )
+        with daily_scanner_subtab:
+            st.info("No daily >5% ownership movement is available.")
     else:
         if analyze_by == "Stock":
             daily_ticker = str(selected_entity)
@@ -1234,6 +1402,8 @@ if active_page == "5% Ownership":
                 st.info(f"No securities-account positions are available for {selected_entity}.")
             with account_movement_subtab:
                 st.info(f"No securities-account movement is available for {selected_entity}.")
+            with daily_scanner_subtab:
+                st.info(f"No daily >5% ownership movement is available for {selected_entity}.")
         else:
             movement_dates = sorted(
                 pd.Timestamp(value) for value in ticker_movements["date"].dropna().unique()
@@ -1574,6 +1744,93 @@ if active_page == "5% Ownership":
                         movement=True,
                     )
 
+            with daily_scanner_subtab:
+                scanner_dates = sorted(
+                    pd.Timestamp(value)
+                    for value in daily_movements["date"].dropna().unique()
+                )
+                scanner_controls = st.columns([1.15, 1.15, 2.2, 1.8], gap="small")
+                with scanner_controls[0]:
+                    embedded_scanner_date = pd.Timestamp(
+                        st.selectbox(
+                            "Date",
+                            scanner_dates,
+                            index=len(scanner_dates) - 1,
+                            format_func=lambda value: pd.Timestamp(value).strftime("%d %b %Y"),
+                            key="embedded_daily_scanner_date",
+                        )
+                    )
+                with scanner_controls[1]:
+                    embedded_scope = st.selectbox(
+                        "Market Scope",
+                        ["Current ticker", "All tickers"],
+                        key="embedded_daily_scanner_scope",
+                    )
+                embedded_base = daily_movements[
+                    daily_movements["date"].eq(embedded_scanner_date)
+                ].copy()
+                if embedded_scope == "Current ticker":
+                    embedded_base = embedded_base[embedded_base["ticker"].eq(daily_ticker)]
+                with scanner_controls[2]:
+                    embedded_owners = st.multiselect(
+                        "Beneficial Owner",
+                        sorted(embedded_base["owner"].dropna().astype(str).unique()),
+                        placeholder="All owners",
+                        key="embedded_daily_scanner_owners",
+                    )
+                with scanner_controls[3]:
+                    embedded_signals = st.multiselect(
+                        "Signal",
+                        sorted(embedded_base["signal"].dropna().astype(str).unique()),
+                        placeholder="All signals",
+                        format_func=daily_signal_label,
+                        key="embedded_daily_scanner_signals",
+                    )
+                if embedded_owners:
+                    embedded_base = embedded_base[embedded_base["owner"].isin(embedded_owners)]
+                if embedded_signals:
+                    embedded_base = embedded_base[embedded_base["signal"].isin(embedded_signals)]
+                render_daily_summary(embedded_scanner_date, embedded_base)
+                embedded_base = embedded_base.assign(
+                    _magnitude=embedded_base["delta_shares"].abs().fillna(0)
+                ).sort_values(["_magnitude", "current_pct"], ascending=[False, False])
+                embedded_display = embedded_base[
+                    [
+                        "ticker", "owner", "previous_shares", "current_shares",
+                        "delta_shares", "previous_pct", "current_pct",
+                        "delta_pct_point", "signal",
+                    ]
+                ].rename(
+                    columns={
+                        "ticker": "Ticker",
+                        "owner": "Beneficial Owner",
+                        "previous_shares": "Previous Shares",
+                        "current_shares": "Current Shares",
+                        "delta_shares": "Δ Shares",
+                        "previous_pct": "Previous %",
+                        "current_pct": "Current %",
+                        "delta_pct_point": "Δ pp",
+                        "signal": "Signal",
+                    }
+                )
+                embedded_display["Signal"] = embedded_display["Signal"].map(daily_signal_label)
+                table_heading("Daily beneficial-owner movement", separated=True)
+                render_activity_dataframe(
+                    embedded_display,
+                    f"embedded_daily_scanner_{embedded_scanner_date:%Y%m%d}_{embedded_scope}",
+                    {
+                        "Previous Shares": "{:,.0f}",
+                        "Current Shares": "{:,.0f}",
+                        "Δ Shares": signed_shares,
+                        "Previous %": "{:.2f}%",
+                        "Current %": "{:.2f}%",
+                        "Δ pp": signed_points,
+                    },
+                    ["Δ Shares", "Δ pp"],
+                    ["Ticker", "Beneficial Owner"],
+                    max_height=560,
+                )
+
             if not daily_quality.empty:
                 with st.expander(
                     f"Data quality and audit log · {len(daily_quality):,} warning(s)",
@@ -1753,7 +2010,7 @@ if active_page == "Type":
                         "Domestic and foreign ownership",
                         "Number of scripless shares",
                         type_dates,
-                        color_map={"Domestic": "#00C781", "Foreign": "#3182F6"},
+                        color_map={"Domestic": "#45B820", "Foreign": "#4D75D7"},
                     ),
                     width="stretch",
                     config=PLOT_CONFIG,
