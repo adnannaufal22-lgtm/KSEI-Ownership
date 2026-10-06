@@ -39,7 +39,7 @@ Keep one workbook per month in each monthly folder. A filename containing `YYYY-
 After adding the files, double-click **Publish Monthly Update.bat** to validate, commit, and push the changed data. Streamlit Community Cloud rebuilds the hosted app from the GitHub repository. From PowerShell in the project folder, the equivalent command is:
 
 ```powershell
-.\Publish Monthly Update.bat
+& ".\Publish Monthly Update.bat"
 ```
 
 The dashboard automatically:
