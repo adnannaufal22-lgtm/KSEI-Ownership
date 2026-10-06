@@ -19,7 +19,7 @@ if errorlevel 1 goto setup_failed
 if errorlevel 1 goto setup_failed
 
 :validate
-echo Validating the monthly BEI files...
+echo Validating all monthly and daily BEI files...
 ".venv\Scripts\python.exe" validate_data.py
 if errorlevel 1 goto validation_failed
 
@@ -66,4 +66,3 @@ pause
 
 :end
 endlocal
-

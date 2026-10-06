@@ -36,7 +36,11 @@ Add each new BEI/IDX workbook to its matching folder:
 
 Keep one workbook per month in each monthly folder. A filename containing `YYYY-MM` is recommended, for example `2026-09_1% Ownership.xlsx`. Put each downloaded IDX **Pemegang Saham di Atas 5%** daily workbook in `BEI_Data\5% Ownership`; overlapping observations are deduplicated automatically and the newest source is retained when IDX republishes a date.
 
-After adding the files, double-click **Publish Monthly Update.bat** to validate, commit, and push the changed data. Streamlit Community Cloud rebuilds the hosted app from the GitHub repository.
+After adding the files, double-click **Publish Monthly Update.bat** to validate, commit, and push the changed data. Streamlit Community Cloud rebuilds the hosted app from the GitHub repository. From PowerShell in the project folder, the equivalent command is:
+
+```powershell
+.\Publish Monthly Update.bat
+```
 
 The dashboard automatically:
 
