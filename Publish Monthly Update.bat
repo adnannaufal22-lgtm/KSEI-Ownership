@@ -27,13 +27,13 @@ git add -- BEI_Data
 git diff --cached --quiet
 if not errorlevel 1 goto no_changes
 
-git commit -m "Update monthly BEI ownership data"
+git commit -m "Update BEI ownership data"
 if errorlevel 1 goto publish_failed
 git push
 if errorlevel 1 goto publish_failed
 
 echo.
-echo Monthly data published. The hosted dashboard will refresh automatically.
+echo BEI ownership data published. The hosted dashboard will refresh automatically.
 pause
 goto end
 
