@@ -15,8 +15,8 @@ Double-click **Open Dashboard.bat**. The first launch creates the local environm
 The dashboard opens on a market-wide **Overview**. It does not require a ticker and contains two views: **1% Monthly Changes** and **5% Daily Movement**. Ticker or owner selectors appear only after entering an entity-level page.
 
 1. **Overview** — market-wide monthly 1% changes and the daily >5% movement scanner, with optional filters that default to all securities and owners.
-2. **1% Ownership** — holder/stock history chart, number-of-shares pivot, and ownership-percentage pivot.
-3. **5% Ownership** — daily monitoring with exactly three sub-tabs: Beneficial Owner, Latest Account Position, and Account Movement.
+2. **1% Ownership** — stock or owner history chart, number-of-shares pivot, and ownership-percentage pivot. Owner mode reverses the view to show the selected owner's stocks.
+3. **5% Ownership** — stock or owner daily monitoring with exactly three sub-tabs: Summary, Latest Account Position, and Account Movement. Owner mode summarizes every stock reported for that owner and keeps account positions and transfers scoped to the same owner.
 4. **Classification** — dynamic investor-classification history and matching pivots.
 5. **Type** — scrip versus scripless and Domestic versus Foreign charts with their pivots placed alongside.
 6. **Entity Movement** — period-over-period movement charts for the selected stock or owner.
