@@ -16,6 +16,19 @@ def _normalize_header(value: Any) -> str:
     return "_".join(str(value).strip().upper().replace("/", " ").replace("-", " ").split())
 
 
+def standardize_classification_label(value: Any) -> str:
+    """Return a stable classification name across BEI workbook formats.
+
+    From September 2026 onward, BEI prefixes the former classification columns
+    with ``Local_`` and ``Foreign_``. Residency is already represented by the
+    two source columns, so the dashboard combines those columns under their
+    historical base classification.
+    """
+    label = re.sub(r"\s+", " ", str(value).replace("_", " ")).strip()
+    label = re.sub(r"^(?:LOCAL|FOREIGN)\s+", "", label, flags=re.IGNORECASE)
+    return label.upper()
+
+
 def choose_data_sheet(excel: pd.ExcelFile, config: dict) -> str:
     names = excel.sheet_names
     normalized = {_normalize_header(name): name for name in names}
@@ -256,6 +269,8 @@ def load_classification_folder(folder: str | Path, config: dict) -> tuple[pd.Dat
     files, issues = _select_monthly_files(discovered_files)
     frames: list[pd.DataFrame] = []
     loaded_files: list[str] = []
+    classification_aliases: dict[str, str] = {}
+    source_classification_groups: dict[str, dict[str, list[str]]] = {}
 
     date_aliases = config.get("columns", {}).get("date", ["DATE"])
     ticker_aliases = config.get("columns", {}).get("ticker", ["SHARE_CODE", "STOCK_CODE"])
@@ -307,15 +322,21 @@ def load_classification_folder(folder: str | Path, config: dict) -> tuple[pd.Dat
                 index=raw.index,
             )
 
+            file_groups: dict[str, list[str]] = {}
             for column in classification_columns:
                 values = pd.to_numeric(raw[column], errors="coerce")
                 if not values.notna().any():
                     continue
+                raw_label = re.sub(r"\s+", " ", str(column)).strip()
+                standardized_label = standardize_classification_label(raw_label)
+                classification_aliases[raw_label] = standardized_label
+                file_groups.setdefault(standardized_label, []).append(raw_label)
                 part = base.copy()
-                part["classification"] = re.sub(r"\s+", " ", str(column)).strip()
+                part["classification"] = standardized_label
                 part["ownership_units"] = values
                 part["source_file"] = path.name
                 frames.append(part)
+            source_classification_groups[path.name] = file_groups
             loaded_files.append(path.name)
         except Exception as error:
             issues.append(f"Skipped {path.name}: {error}.")
@@ -341,6 +362,19 @@ def load_classification_folder(folder: str | Path, config: dict) -> tuple[pd.Dat
     combined = pd.concat(frames, ignore_index=True)
     combined = combined.dropna(subset=["date", "ticker", "classification", "ownership_units"])
     combined = (
+        combined.groupby(
+            ["source_file", "date", "ticker", "classification"],
+            as_index=False,
+            observed=True,
+            dropna=False,
+        )
+        .agg(
+            security_name=("security_name", "first"),
+            ownership_units=("ownership_units", lambda values: values.sum(min_count=1)),
+            total_scripless=("total_scripless", "first"),
+        )
+    )
+    combined = (
         combined.sort_values(["source_file", "date", "ticker", "classification"])
         .drop_duplicates(["date", "ticker", "classification"], keep="last")
         .sort_values(["date", "ticker", "classification"])
@@ -364,6 +398,13 @@ def load_classification_folder(folder: str | Path, config: dict) -> tuple[pd.Dat
         "source_file_names": loaded_files,
         "issues": issues,
         "reconciliation_mismatches": mismatch_count,
+        "classification_aliases": classification_aliases,
+        "merged_classification_groups": sum(
+            len(raw_labels) > 1
+            for groups in source_classification_groups.values()
+            for raw_labels in groups.values()
+        ),
+        "standardized_classifications": int(combined["classification"].nunique()),
     }
     return combined[columns], metadata
 

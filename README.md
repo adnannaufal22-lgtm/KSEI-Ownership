@@ -74,7 +74,7 @@ The local address is normally http://localhost:8501.
 ## Source schema assumptions
 
 - **1% Ownership:** reporting date, stock code, issuer name, owner name, total holding shares, and ownership percentage. Optional type, residency, nationality, domicile, scripless, and scrip columns are mapped when present.
-- **Classification:** one stock row per month, identity columns plus any number of classification share columns and `TOTAL SCRIPLESS`. Classification columns are detected dynamically.
+- **Classification:** one stock row per month, identity columns plus any number of classification share columns and `TOTAL SCRIPLESS`. Classification columns are detected dynamically. From the September 2026 BEI format onward, matching `Local_…` and `Foreign_…` columns are summed into the historical base classification; genuinely new base labels are retained as new standardized classifications.
 - **Type:** a three-row header containing `NUMBER OF SHARES`, Domestic/Foreign groups, investor-category and holding-band columns, and `TOTAL SCRIPLESS`.
 - **Daily >5%:** two-row daily header containing stock code/name, `Nama Pemegang Saham`, combined holdings/percentage, and the two securities-account identity fields. Blank or omitted owners are treated as not reported, not automatically as a sale.
 

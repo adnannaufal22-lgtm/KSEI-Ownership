@@ -177,7 +177,9 @@ def main() -> None:
     print(
         f"Classification: {classification_meta['source_files']} files, "
         f"{len(classification):,} rows, {periods_label(classification)}; "
-        "all stock-month totals reconcile."
+        "all stock-month totals reconcile; "
+        f"{classification_meta.get('merged_classification_groups', 0):,} "
+        "residency-split category pairs standardized."
     )
 
     type_data, type_meta = load_type_folder(TYPE_DIR, config)
